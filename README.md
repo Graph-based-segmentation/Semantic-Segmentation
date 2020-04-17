@@ -10,6 +10,9 @@ This model and training code is so simple upgrade that low performance than sema
 However, our team is upgrading this code consistently and propose new semantic segmentation model.  
 we will soon upgrade the code for it. 
 
+## Note!
+Our team is still organizing the code, so the readability of the code is low.
+
 ## Qualitative Result
 ### Raw image
 ![cityscapes_image](./test_image/cityscapes_image.JPG)
