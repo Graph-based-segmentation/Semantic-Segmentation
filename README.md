@@ -10,6 +10,9 @@ This model and training code is so simple upgrade that low performance than sema
 However, our team is upgrading this code consistently and propose new semantic segmentation model.  
 we will soon upgrade the code for it. 
 
-## Result
-![cityscapes_image](C:\Users\audrb\PycharmProjects\Personal_project\Semantic_Segmentation\image\cityscapes_image.JPG)
-<img scr="C:\\Users\\audrb\\PycharmProjects\\Personal_project\\Semantic_Segmentation\\image\\cityscapes_image.JPG" width="40%" height=30% title="cityscapes" alt="cityscapes"></img><br/>
+## Qualitative Result
+### Raw image
+![cityscapes_image](./image/cityscapes_image.JPG)
+
+### Predicted image
+![cityscapes_image](./image/Semantic_Segmentation.JPG)
