@@ -12,7 +12,7 @@ we will soon upgrade the code for it.
 
 ## Qualitative Result
 ### Raw image
-![cityscapes_image](./image/cityscapes_image.JPG)
+![cityscapes_image](./test_image/cityscapes_image.JPG)
 
 ### Predicted image
-![cityscapes_image](./image/Semantic_Segmentation.JPG)
+![cityscapes_image](./test_image/Semantic_Segmentation.JPG)
