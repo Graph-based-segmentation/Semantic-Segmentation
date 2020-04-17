@@ -11,5 +11,5 @@ However, our team is upgrading this code consistently and propose new semantic s
 we will soon upgrade the code for it. 
 
 ## Result
-<!-- ![Alt text] (G:\\MK\\KRoC 논문\\cityscapes_image.JPG) -->
+![cityscapes_image](C:\Users\audrb\PycharmProjects\Personal_project\Semantic_Segmentation\image\cityscapes_image.JPG)
 <img scr="C:\\Users\\audrb\\PycharmProjects\\Personal_project\\Semantic_Segmentation\\image\\cityscapes_image.JPG" width="40%" height=30% title="cityscapes" alt="cityscapes"></img><br/>
