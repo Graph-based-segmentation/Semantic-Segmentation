@@ -11,7 +11,7 @@ we will soon upgrade the code for it.
 ## Note!
 Our team is still organizing the code, so the reAadability of the code is low.
 
-## Qualitative Result
+## Qualitative Segmentation Result
 ### Raw image
 ![cityscapes_image](./test_image/cityscapes_image.JPG)
 
