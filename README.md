@@ -9,7 +9,7 @@ However, our team is upgrading this code consistently and propose new semantic s
 we will soon upgrade the code for it.
 
 ## Note!
-Our team is still organizing the code, so the reAadability of the code is low.
+Our team is still organizing the code, so the readability of the code is low.
 
 ## Qualitative Segmentation Result
 ### Raw image
