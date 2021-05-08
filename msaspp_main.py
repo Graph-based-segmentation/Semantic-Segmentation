@@ -1,3 +1,13 @@
+from PIL import Image
+from cfgs import DenseASPP121
+from torch import optim
+from torch.backends import cudnn
+from torch.utils.data import DataLoader
+from msaspp_dataloader import msasppDataLoader
+from models.DenseASPP_boundary_depthwise import *
+from My_train.misc import check_mkdir, AverageMeter
+from collections import OrderedDict
+
 import os
 import time
 import timeit
@@ -9,17 +19,6 @@ import My_train.transforms as extended_transforms
 import argparse
 import torch.nn.functional
 
-from PIL import Image
-from cfgs import DenseASPP121
-from torch import optim
-from torch.backends import cudnn
-from torch.utils.data import DataLoader
-from msaspp_dataloader import msasppDataLoader
-
-from models.DenseASPP_boundary_depthwise import *
-
-from My_train.misc import check_mkdir, AverageMeter
-from collections import OrderedDict
 
 parser = argparse.ArgumentParser(description='Multi-scale ASPP training')
 
