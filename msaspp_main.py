@@ -1,37 +1,38 @@
-from PIL import Image
-from cfgs import DenseASPP121
-from torch import optim
-from torch.backends import cudnn
-from torch.utils.data import DataLoader
-from msaspp_dataloader import msasppDataLoader
-from models.DenseASPP_boundary_depthwise import *
-from My_train.misc import check_mkdir, AverageMeter
-from collections import OrderedDict
 
 import os
 import time
 import timeit
-import shutil
-# import torchvision.transforms as standard_transforms
+import torchvision.transforms as standard_transforms
 import torchvision.utils as vutils
-import My_train.joint_transforms as joint_transforms
-import My_train.transforms as extended_transforms
+import miscellaneous.joint_transforms as joint_transforms
+import miscellaneous.transforms as extended_transforms
 import argparse
 import torch.nn.functional
+import torch.multiprocessing as mp
+import torch
 
+from networks.resnet50_3d_gcn_x5 import RESNET50_3D_GCN_X5
+from torchvision.models.resnet import resnet50
+from PIL import Image
+from torch import optim
+from torch.backends import cudnn
+from msaspp_dataloader import msasppDataLoader
+from miscellaneous.misc import AverageMeter
+from collections import OrderedDict
 
 parser = argparse.ArgumentParser(description='Multi-scale ASPP training')
 
+parser.add_argument('--mode',                   type=str,   help='training and test mode',  default='train')
+parser.add_argument('--model_select',           type=str,   help='Select the model type',   default='resnet')
+
 # Dataset
-parser.add_argument('--input_height',           type=int,   help='input height', default=512)
-parser.add_argument('--input_width',            type=int,   help='input width', default=512)
-parser.add_argument('--data_path',              type=str,   help='training data path', default='D:\\PycharmProjects\\Personal_project\\Cityscapes_dataset')
+parser.add_argument('--data_path',              type=str,   help='training data path',  default=os.path.join(os.getcwd(), 'dataset'))
+parser.add_argument('--input_height',           type=int,   help='input height',        default=512)
+parser.add_argument('--input_width',            type=int,   help='input width',         default=512)
 
 # Training
-parser.add_argument('--mode',                   type=str,   help='training and test mode',  default='train')
-parser.add_argument('--train_batch_size',       type=int,   help='train batch size', default=4)
+parser.add_argument('--train_batch_size',       type=int,   help='train batch size', default=8)
 parser.add_argument('--val_batch_size',         type=int,   help='validation batch size', default=4)
-parser.add_argument('--num_threads',            type=int,   help='number of threads to use for data loading', default=12)
 parser.add_argument('--learning_rate',          type=float, help='initial learning rate', default=3e-4)
 parser.add_argument('--num_epochs',             type=int,   help='number of epochs', default=100)
 parser.add_argument('--weight_decay',           type=float, help='weight decay', default=1e-5)
@@ -40,14 +41,24 @@ parser.add_argument('--val_save_to_img_file',   type=bool,  help='save validatio
 parser.add_argument('--val_img_sample_rate',    type=float, help='randomly sample some validation results to display', default=0.05)
 
 # Preprocessing
-parser.add_argument('--random_rotate',          type=bool,  help='if set, will perform random rotation for augmentation', default=True)
-parser.add_argument('--degree',                 type=float, help='random rotation maximum degree',  default=2.5)
+parser.add_argument('--random_rotate',          type=bool,  help='if set, will perform random rotation for augmentation',   default=True)
+parser.add_argument('--degree',                 type=float, help='random rotation maximum degree',                          default=2.5)
+
 # Log and save
-parser.add_argument('--checkpoint_path',        type=str,   help='path to a specific checkpoint to load',
-                    default='/home/mk/Semantic_Segmentation/DenseASPP-master/pretrained_model/densenet121.pth')
-parser.add_argument('--GPU',                    type=int,   help='the number of GPU', default=1)
+parser.add_argument('--checkpoint_path',        type=str,   help='path to a specific checkpoint to load', default='')
 parser.add_argument('--model_freq',             type=int,   help='save the model', default=100)
 
+# Multi-gpu training
+parser.add_argument('--gpu',            type=int,  help='GPU id to use', default=0)
+parser.add_argument('--rank',           type=int,  help='node rank(tensor dimension)for distributed training', default=0)
+parser.add_argument('--dist_url',       type=str,  help='url used to set up distributed training', default='file:///c:/MultiGPU.txt')
+parser.add_argument('--dist_backend',   type=str,  help='distributed backend', default='gloo')
+parser.add_argument('--num_threads',    type=int,  help='number of threads to use for data loading', default=5)
+parser.add_argument('--world_size',     type=int,  help='number of nodes for distributed training', default=1)
+parser.add_argument('--multiprocessing_distributed',       help='Use multi-processing distributed training to launch '
+                                                                'N process per node, which has N GPUs. '
+                                                                'This is the fastest way to use PyTorch for either single node or '
+                                                                'multi node data parallel training', default=False)
 args = parser.parse_args()
 
 cudnn.benchmark = True
@@ -63,8 +74,54 @@ def poly_lr_scheduler(init_lr, epoch, maxEpoch=args.num_epochs, power=0.9):
     return lr
 
 def main():
-    net = DenseASPP_boundary_depthwise(model_cfg=DenseASPP121.Model_CFG).cuda()
-
+    
+    torch.cuda.empty_cache()
+    args.distributed = args.world_size > 1 or args.multiprocessing_distributed
+    
+    ngpus_per_node = torch.cuda.device_count()
+    
+    if args.multiprocessing_distributed:
+        args.world_size = ngpus_per_node * args.world_size
+        mp.spawn(main_worker, nprocs=ngpus_per_node, args=(ngpus_per_node, args))
+    else:
+        main_worker(ngpus_per_node, args)
+        
+def main_worker(ngpus_per_node, args):
+    if args.gpu is not None:
+        print("Use GPU: {} for training".format(args.gpu))
+        
+    if args.model_select == 'resnet':
+        model = resnet50(pretrained=True)
+        del [model.fc, model.avgpool]
+        
+    elif args.model_select == 'glore':
+        model = RESNET50_3D_GCN_X5(num_classes=19, pretrained=False)
+    model.train()
+    
+    if args.distributed:
+        a=1
+    else:
+        model = torch.nn.DataParallel(model)
+        model.cuda()
+    
+    global_step = 0
+    
+    cudnn.benchmark = True
+    dataloader = msasppDataLoader(args)
+    
+    step_per_epoch = len(dataloader.data)
+    num_total_steps = args.num_epochs * step_per_epoch
+    epoch = global_step // step_per_epoch
+    
+    while epoch < args.num_epochs:
+        for step, sample_batched in enumerate(dataloader.data):
+            befor_op_time = time.time()
+            
+            sample_image = sample_batched['image'].cuda(args.gpu, non_blocking=True)
+            sample_label = sample_batched['gt'].cuda(args.gpu, non_blocking=True)
+            
+            output = model(sample_image)
+            
     if len(args.checkpoint_path) == 0:
         curr_epoch = 1
         # Initializing 'best_record'
@@ -275,36 +332,4 @@ def train(train_loader, net, weighted_criterion, optimizer, epoch, train_args):
         index += 1
 
 if __name__ == '__main__':
-
-    dataloader = msasppDataLoader(args)
-    for step, sample_batched in enumerate(dataloader.data):
-        print(step, sample_batched)
-    # x = 1
-    # version = '09'
-    #
-    # ckpt_path = '../../ckpt'
-    # ImageNet = 'ImageNet/DenseNet121_v3'
-    # exp_name_ImageNet = 'segImageNet_v0{}_{}'.format(x, version)
-    #
-    # writer = SummaryWriter(os.path.join(ckpt_path, 'TensorboardX', ImageNet, exp_name_ImageNet))
-    #
-    # check_mkdir(ckpt_path)
-    # check_mkdir(os.path.join(ckpt_path, 'Model', ImageNet, exp_name_ImageNet))
-    # open(os.path.join(ckpt_path, 'Model', ImageNet, exp_name_ImageNet, str(datetime.datetime.now()) + '.txt'),
-    #      'w').write(
-    #     str(args) + '\n\n')
-    #
-    # src = "/home/mk/Semantic_Segmentation/DenseASPP-master/My_train/msaspp_main.py"
-    # src_model = "/home/mk/Semantic_Segmentation/DenseASPP-master/models/DenseASPP_boundary_depthwise.py"
-
-    # copy_path = os.path.join(ckpt_path, 'TensorboardX', ImageNet, exp_name_ImageNet,
-    #                          "segmentation_main_v3_" + "v0{}_{}.py".format(x, version))
-    # model_copy_path = os.path.join(ckpt_path, 'TensorboardX', ImageNet, exp_name_ImageNet,
-    #                                "DenseASPP_boundary_depthwise" + "v0{}_{}.py".format(x, version))
-    #
-    # shutil.copy(src, copy_path)
-    # shutil.copy(src_model, model_copy_path)
-
-    GPU_ID = args.GPU
-
     main()
