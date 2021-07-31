@@ -1,14 +1,11 @@
 import os
 import random
 import numpy as np
-from numpy.core.fromnumeric import std
+import torch
 
 from torchvision import transforms
 from PIL import Image
 from torch.utils.data import Dataset, DataLoader
-
-num_classes = 19
-ignore_label = 255
 
 palette = [128, 64, 128, 244, 35, 232, 70, 70, 70, 102, 102, 156, 190, 153, 153, 153, 153, 153, 250, 170, 30,
            220, 220, 0, 107, 142, 35, 152, 251, 152, 70, 130, 180, 220, 20, 60, 255, 0, 0, 0, 0, 142, 0, 0, 70,
@@ -42,9 +39,7 @@ def make_dataset(quality, args):
     assert os.listdir(img_path) == os.listdir(mask_path)
 
     items = []
-
     categories = os.listdir(img_path)
-
     for c in categories:
         c_items = [name.split('_leftImg8bit.png')[0] for name in os.listdir(os.path.join(img_path, c))]
 
@@ -54,23 +49,29 @@ def make_dataset(quality, args):
 
     return items
 
-def transform_preprocessing(mode):
-    return transforms.Compose([
-        ToTensor(mode=mode)
-    ])
+def preprocessing_transform(mode):
+    return transforms.Compose([ToTensor(mode=mode)])
 
 class msasppDataLoader(object):
     def __init__(self, args):
+        self.num_classes = 19
+        self.class_names = ['unlabelled', 'road', 'sidewalk', 'building', 'wall', 'fence', \
+                            'pole', 'traffic_light', 'traffic_sign', 'vegetation', 'terrain', \
+                            'sky', 'person', 'rider', 'car', 'truck', 'bus', 'train', \
+                            'motorcycle', 'bicycle']
+        
         if args.mode == 'train':
-            self.training_samples = DataLoadPreprocess(quality='fine', args=args, transform=transform_preprocessing(args.mode))
+            self.training_samples = DataLoadPreprocess(quality='fine', args=args, transform=preprocessing_transform(args.mode))
             self.data = DataLoader(self.training_samples, args.train_batch_size,
                                    shuffle=True, num_workers=args.num_threads)
 
 class DataLoadPreprocess(Dataset):
     def __init__(self, quality, args, transform=None):
+        ignore_label = 255
+        
         self.args = args
         self.pair_img = make_dataset(quality, args)
-
+        
         if len(self.pair_img) == 0:
             raise RuntimeError('Found 0 images, please check the data set')
         self.quality = quality
@@ -85,11 +86,6 @@ class DataLoadPreprocess(Dataset):
 
         self.void_classes = [0, 1, 2, 3, 4, 5, 6, 9, 10, 14, 15, 16, 18, 29, 30, -1]
         self.valid_classes = [7, 8, 11, 12, 13, 17, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 31, 32, 33]
-
-        self.class_names = ['unlabelled', 'road', 'sidewalk', 'building', 'wall', 'fence', \
-                            'pole', 'traffic_light', 'traffic_sign', 'vegetation', 'terrain', \
-                            'sky', 'person', 'rider', 'car', 'truck', 'bus', 'train', \
-                            'motorcycle', 'bicycle']
         """7: road, 8: sidewalk, 11: building, ...."""
 
     def __getitem__(self, index):
@@ -100,22 +96,24 @@ class DataLoadPreprocess(Dataset):
 
             gt = np.array(gt)
             mask_copy = gt.copy()
-            for k, v in self.id_to_trainid.items():
-                mask_copy[gt == k] = v
+            
+            for key, value in self.id_to_trainid.items():
+                mask_copy[gt == key] = value
             gt = Image.fromarray(mask_copy.astype(np.uint8))
 
             if self.args.random_rotate:
                 random_angle = (random.random() - 0.5) * 2 * self.args.degree
-                img = self.rotate_image(img, random_angle)
+                image = self.rotate_image(img, random_angle)
                 gt = self.rotate_image(gt, random_angle, flag=Image.NEAREST)
 
-            img = np.asarray(img, dtype=np.float32) / 255.0
+            image = np.asarray(image, dtype=np.float32) / 255.0
             gt = np.asarray(gt, dtype=np.float32)
-
-            img, gt = self.random_crop(img, gt, self.args.input_height, self.args.input_width)
-            img, gt = self.train_preprocess(img, gt)
+            gt = np.expand_dims(gt, axis=2)
             
-            sample = {'image': img, 'gt': gt}
+            image, gt = self.random_crop(image, gt, self.args.input_height, self.args.input_width)
+            image, gt = self.train_preprocess(image, gt)
+            
+            sample = {'image': image, 'gt': gt}
             
             if self.transform:
                 sample = self.transform(sample)
@@ -132,29 +130,41 @@ class DataLoadPreprocess(Dataset):
         y = random.randint(0, img.shape[0] - height)
 
         img = img[y:y + height, x:x + width, :]
-        gt = gt[y:y + height, x: x + width, :]
+        gt = gt[y:y + height, x:x + width, :]
 
         return img, gt
     
-    def train_preprocess(self, img, gt):
+    def train_preprocess(self, image, gt):
+        # Random horizontal flipping
         do_flip = random.random()
         if do_flip > 0.5:
-            img = (img[:, ::-1, :]).copy()
+            image = (image[:, ::-1, :]).copy()
             gt = (gt[:, ::-1, :]).copy()
         
+        # Random gamma, brightness, color augmentation
         do_augment = random.random()
         if do_augment > 0.5:
-            img = self.augment_image(img)
+            image = self.augment_image(image)
             
-        return img, gt
+        return image, gt
 
-    def augment_image(self, img):
+    def augment_image(self, image):
+        # gamma augmentation
+        gamma  = random.uniform(0.9, 1.1)
+        image_aug = image ** gamma
+        
         # brightness augmentation
         brightness = random.uniform(0.9, 1.1)
+        image_aug = image_aug * brightness
         
-        img_aug = img * brightness
+        # color augmentation
+        colors = np.random.uniform(0.9, 1.1, size=3)
+        white = np.ones((image.shape[0], image.shape[1]))
+        color_image = np.stack([white * colors[i] for i in range(3)], axis=2)
+        image_aug *= color_image
+        image_aug = np.clip(image_aug, 0, 1)
         
-        return img_aug
+        return image_aug
     
     def __len__(self):
         return len(self.pair_img)
@@ -166,4 +176,15 @@ class ToTensor(object):
                                               std=[0.229, 0.224, 0.225])
         
     def __call__(self, sample):
+        image, gt = sample['image'], sample['gt']
+        image = self.to_tensor(image)
+        gt = self.to_tensor(gt)
         
+        image = self.normalize(image)
+        
+        return {'image': image, 'gt': gt}
+    
+    def to_tensor(self, pic):
+        if isinstance(pic, np.ndarray):
+            image = torch.from_numpy(pic.transpose(2, 0, 1))
+            return image
