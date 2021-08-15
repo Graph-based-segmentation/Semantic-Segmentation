@@ -2,11 +2,6 @@
 import os
 import time
 import timeit
-
-# import torchvision.transforms as standard_transforms
-# import torchvision.utils as vutils
-# import miscellaneous.joint_transforms as joint_transforms
-# import miscellaneous.transforms as extended_transforms
 import argparse
 import numpy as np
 import torch.nn.functional
@@ -15,18 +10,16 @@ import torch
 
 # from networks.resnet50_3d_gcn_x5 import RESNET50_3D_GCN_X5
 # from torchvision.models.resnet import resnet50
+from torch.utils.tensorboard import SummaryWriter
 from denseASPP import DenseASPP
 from cfgs import DenseASPP121
-from PIL import Image
-from torch import optim
 from torch.backends import cudnn
 from msaspp_dataloader import msasppDataLoader
-from miscellaneous.misc import AverageMeter
-from collections import OrderedDict
 
 parser = argparse.ArgumentParser(description='Multi-scale ASPP training')
 
 parser.add_argument('--mode',                   type=str,   help='training and test mode',          default='train')
+parser.add_argument('--model_name',             type=str,   help='model name to be trained',        default='denseaspp')
 # parser.add_argument('--model_select',           type=str,   help='Select the model type',   default='resnet')
 
 # Dataset
@@ -39,19 +32,21 @@ parser.add_argument('--num_seed',               type=int,   help='random seed nu
 parser.add_argument('--train_batch_size',       type=int,   help='train batch size',                default=8)
 parser.add_argument('--num_epochs',             type=int,   help='number of epochs',                default=80)
 parser.add_argument('--learning_rate',          type=float, help='initial learning rate',           default=3e-4)
-parser.add_argument('--weight_decay',           type=float, help='weight decay',                    default=1e-5)
-parser.add_argument('--val_batch_size',         type=int,   help='validation batch size', default=4)
-parser.add_argument('--print_frequency',        type=int,   help='print frequency', default=10)
-parser.add_argument('--val_save_to_img_file',   type=bool,  help='save validation image file', default=True)
-parser.add_argument('--val_img_sample_rate',    type=float, help='randomly sample some validation results to display', default=0.05)
+parser.add_argument('--weight_decay',           type=float, help='weight decay factor for optimization',                                default=1e-5)
+# parser.add_argument('--val_batch_size',         type=int,   help='validation batch size', default=4)
+# parser.add_argument('--val_save_to_img_file',   type=bool,  help='save validation image file', default=True)
+# parser.add_argument('--val_img_sample_rate',    type=float, help='randomly sample some validation results to display', default=0.05)
+parser.add_argument('--retrain',                type=bool,  help='If used with checkpoint_path, will restart training from step zero',  default=False)
 
 # Preprocessing
 parser.add_argument('--random_rotate',          type=bool,  help='if set, will perform random rotation for augmentation',   default=False)
 parser.add_argument('--degree',                 type=float, help='random rotation maximum degree',                          default=2.5)
 
 # Log and save
-parser.add_argument('--checkpoint_path',        type=str,   help='path to a specific checkpoint to load', default='')
-parser.add_argument('--model_freq',             type=int,   help='save the model', default=100)
+parser.add_argument('--checkpoint_path',        type=str,   help='path to a specific checkpoint to load',               default='')
+parser.add_argument('--log_directory',          type=str,   help='directory to save checkpoints and summaries',         default=os.path.join(os.getcwd(), 'log'))
+parser.add_argument('--log_freq',               type=int,   help='Logging frequency in global steps',                   default=100)
+parser.add_argument('--save_freq',              type=int,   help='Checkpoint saving frequency in global steps',         default=500)
 
 # Multi-gpu training
 parser.add_argument('--gpu',            type=int,  help='GPU id to use', default=0)
@@ -66,19 +61,12 @@ parser.add_argument('--multiprocessing_distributed',       help='Use multi-proce
                                                                 'multi node data parallel training', default=False)
 args = parser.parse_args()
 
-cudnn.benchmark = True
-
-def poly_lr_scheduler(init_lr, epoch, maxEpoch=args.num_epochs, power=0.9):
-    # "init_lr      : base learning rate \
-    # iter          : current iteration \
-    # lr_decay_iter : how frequently decay occurs, default is 1 \
-    # power         : polynomial power"
-    lr = init_lr * ((1 - epoch / maxEpoch) ** power)
-    # for param_group in optimizer.param_groups:
-    #     param_group['lr'] = lr
-    return lr
-
+def check_folder(path):
+    if not os.path.exists(path):
+        os.makedirs(path)
+        
 def main():
+    check_folder(args.log_directory)
     torch.cuda.empty_cache()
     args.distributed = args.world_size > 1 or args.multiprocessing_distributed
     
@@ -147,13 +135,16 @@ def main_worker(ngpus_per_node, args):
     cudnn.benchmark = True
     dataloader = msasppDataLoader(args)
     
+    # Logging
+    writer = SummaryWriter(os.path.join(args.log_directory, args.model_name, 'summaries'), flush_secs=30)
+    
     criterion = torch.nn.CrossEntropyLoss(ignore_index=dataloader.ignore_label).cuda()
     start_time = time.time()
     duration = 0
     
-    step_per_epoch = len(dataloader.data)
-    num_total_steps = args.num_epochs * step_per_epoch
-    epoch = global_step // step_per_epoch
+    steps_per_epoch = len(dataloader.data)
+    num_total_steps = args.num_epochs * steps_per_epoch
+    epoch = global_step // steps_per_epoch
     
     while epoch < args.num_epochs:
         if args.distributed:
@@ -176,7 +167,41 @@ def main_worker(ngpus_per_node, args):
                 param_group['lr'] = current_lr
             
             optimizer.step()
-
+            
+            if not args.multiprocessing_distributed or (args.multiprocessing_distributed and args.rank % ngpus_per_node == 0):
+                print('[epoch][s/s_per_e/gs]: [{}][{}/{}/{}], lr: {:.12f}, loss: {:.12f}'.format(epoch, step, steps_per_epoch, global_step, current_lr, loss))
+                if np.isnan(loss.cpu().item()):
+                    print('NaN in loss occurred. Aborting training.')
+                    return -1
+                
+            duration += time.time() - befor_op_time
+            if global_step and global_step * args.log_freq == 0:
+                examples_per_sec = args.batch_size / duration * args.log_freq
+                duration = 0
+                time_sofar = (time.time() - start_time) / 3600
+                training_time_left = (num_total_steps / global_step - 1.0) * time_sofar
+                if not args.multiprocessing_distributed or (args.multiprocessing_distributed and args.rank % ngpus_per_node == 0):
+                    print("{}".format(args.model_name))
+                print_string = 'GPU: {} | examples/s: {:4.2f} | loss: {:.5f} | time elapsed: {:.2f}h | time left: {:.2f}h'
+                print(print_string.format(args.gpu, examples_per_sec, loss, time_sofar, training_time_left))
+                
+                if not args.multiprocessing_distributed or (args.multiprocessing_distributed and args.rank % ngpus_per_node == 0):
+                    writer.add_scalar('loss', loss, global_step=global_step)
+                    writer.add_scalar('learning_rate', current_lr, global_step=global_step)
+                    writer.add_scalar('learning_rate', current_lr, global_step=global_step)
+                    
+                    for i in range(args.num_epochs):
+                        writer.add_image('segmentation_gt/image/{}'.format(i), sample_gt[i, :, :, :].data, global_step=global_step)
+                        writer.add_image('segmentation_est/image/{}'.format(i), output[i, :, :, :].data, global_step=global_step)
+                    writer.flush()
+                    
+            if global_step and global_step % args.save_freq == 0:
+                if not args.multiprocessing_distributed and (args.multiprocessing_distributed and args.rank % ngpus_per_node == 0):
+                    checkpoint = {'global_step': global_step,
+                                  'model': model.state_dict(),
+                                  'optimizer': optimizer.state_dict()}
+                    torch.save(checkpoint, os.path.join(args.log_directory, args.model_name, 'model', 'model-{}.pth'.format(global_step)))
+                    
 #     if len(args.checkpoint_path) == 0:
 #         curr_epoch = 1
 #         # Initializing 'best_record'
