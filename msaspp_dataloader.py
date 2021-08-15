@@ -34,7 +34,7 @@ def make_dataset(quality, args):
     else:
         img_dir_name = 'leftImg8bit_trainvaltest'
         mask_path = os.path.join(args.data_path, 'gtFine_trainvaltest', 'gtFine', args.mode)
-        mask_postfix = '_gtFine_labelIds.png'
+        mask_postfix = '_gtFine_labelIds.png`'
     img_path = os.path.join(args.data_path, img_dir_name, 'leftImg8bit', args.mode)
     assert os.listdir(img_path) == os.listdir(mask_path)
 
