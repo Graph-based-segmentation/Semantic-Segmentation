@@ -2,6 +2,7 @@ import os
 import random
 import numpy as np
 import torch
+import math
 
 from torchvision import transforms
 from PIL import Image
@@ -34,7 +35,7 @@ def make_dataset(quality, args):
     else:
         img_dir_name = 'leftImg8bit_trainvaltest'
         mask_path = os.path.join(args.data_path, 'gtFine_trainvaltest', 'gtFine', args.mode)
-        mask_postfix = '_gtFine_labelIds.png`'
+        mask_postfix = '_gtFine_labelIds.png'
     img_path = os.path.join(args.data_path, img_dir_name, 'leftImg8bit', args.mode)
     assert os.listdir(img_path) == os.listdir(mask_path)
 
@@ -55,6 +56,8 @@ def preprocessing_transform(mode):
 class msasppDataLoader(object):
     def __init__(self, args):
         self.num_classes = 19
+        self.ignore_label = 255
+        
         self.class_names = ['unlabelled', 'road', 'sidewalk', 'building', 'wall', 'fence', \
                             'pole', 'traffic_light', 'traffic_sign', 'vegetation', 'terrain', \
                             'sky', 'person', 'rider', 'car', 'truck', 'bus', 'train', \
@@ -67,7 +70,6 @@ class msasppDataLoader(object):
 
 class DataLoadPreprocess(Dataset):
     def __init__(self, quality, args, transform=None):
-        ignore_label = 255
         
         self.args = args
         self.pair_img = make_dataset(quality, args)
@@ -77,12 +79,12 @@ class DataLoadPreprocess(Dataset):
         self.quality = quality
         self.transform = transform
         self.to_tensor = ToTensor
-        self.id_to_trainid = {-1: ignore_label, 0: ignore_label, 1: ignore_label, 2: ignore_label,
-                              3: ignore_label, 4: ignore_label, 5: ignore_label, 6: ignore_label,
-                              7: 0, 8: 1, 9: ignore_label, 10: ignore_label, 11: 2, 12: 3, 13: 4,
-                              14: ignore_label, 15: ignore_label, 16: ignore_label, 17: 5,
-                              18: ignore_label, 19: 6, 20: 7, 21: 8, 22: 9, 23: 10, 24: 11, 25: 12, 26: 13, 27: 14,
-                              28: 15, 29: ignore_label, 30: ignore_label, 31: 16, 32: 17, 33: 18}
+        self.id_to_trainid = {-1: self.ignore_label, 0: self.ignore_label, 1: self.ignore_label, 2: self.ignore_label,
+                              3: self.ignore_label, 4: self.ignore_label, 5: self.ignore_label, 6: self.ignore_label,
+                              7: 0, 8: 1, 9: self.ignore_label, 10: self.ignore_label, 11: 2, 12: 3, 13: 4,
+                              14: self.ignore_label, 15: self.ignore_label, 16: self.ignore_label, 17: 5,
+                              18: self.ignore_label, 19: 6, 20: 7, 21: 8, 22: 9, 23: 10, 24: 11, 25: 12, 26: 13, 27: 14,
+                              28: 15, 29: self.ignore_label, 30: self.ignore_label, 31: 16, 32: 17, 33: 18}
 
         self.void_classes = [0, 1, 2, 3, 4, 5, 6, 9, 10, 14, 15, 16, 18, 29, 30, -1]
         self.valid_classes = [7, 8, 11, 12, 13, 17, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 31, 32, 33]
@@ -93,7 +95,6 @@ class DataLoadPreprocess(Dataset):
             img_path, gt_path = self.pair_img[index]
 
             img, gt = Image.open(img_path).convert('RGB'), Image.open(gt_path)
-
             gt = np.array(gt)
             mask_copy = gt.copy()
             
@@ -101,6 +102,8 @@ class DataLoadPreprocess(Dataset):
                 mask_copy[gt == key] = value
             gt = Image.fromarray(mask_copy.astype(np.uint8))
 
+            image, gt = self.random_resized_crop(self.args, img, gt, scale=(0.5, 2.0))
+            
             if self.args.random_rotate:
                 random_angle = (random.random() - 0.5) * 2 * self.args.degree
                 image = self.rotate_image(img, random_angle)
@@ -110,7 +113,7 @@ class DataLoadPreprocess(Dataset):
             gt = np.asarray(gt, dtype=np.float32)
             gt = np.expand_dims(gt, axis=2)
             
-            image, gt = self.random_crop(image, gt, self.args.input_height, self.args.input_width)
+            # image, gt = self.random_crop(image, gt, self.args.input_height, self.args.input_width)
             image, gt = self.train_preprocess(image, gt)
             
             sample = {'image': image, 'gt': gt}
@@ -125,14 +128,58 @@ class DataLoadPreprocess(Dataset):
 
         return result
 
-    def random_crop(self, img, gt, height, width):
-        x = random.randint(0, img.shape[1] - width)
-        y = random.randint(0, img.shape[0] - height)
+    # def random_crop(self, img, gt, height, width):
+    #     x = random.randint(0, img.shape[1] - width)
+    #     y = random.randint(0, img.shape[0] - height)
 
-        img = img[y:y + height, x:x + width, :]
-        gt = gt[y:y + height, x:x + width, :]
+    #     img = img[y:y + height, x:x + width, :]
+    #     gt = gt[y:y + height, x:x + width, :]
 
-        return img, gt
+    #     return img, gt
+    
+    def random_resized_crop(self, args, image, gt, scale, ratio=(3. / 4., 4. / 3.)):
+        assert image.size == gt.size
+        
+        width, height = transforms.functional._get_image_size(image)
+        area = height * width
+        
+        log_ratio = torch.log(torch.tensor(ratio))
+        for _ in range(10):
+            target_area = area * torch.empty(1).uniform_(scale[0], scale[1]).item()
+            aspect_ratio = torch.exp(
+                torch.empty(1).uniform_(log_ratio[0], log_ratio[1])
+            ).item()
+
+            w = int(round(math.sqrt(target_area * aspect_ratio)))
+            h = int(round(math.sqrt(target_area / aspect_ratio)))
+
+            if 0 < w <= width and 0 < h <= height:
+                i = torch.randint(0, height - h + 1, size=(1,)).item()
+                j = torch.randint(0, width - w + 1, size=(1,)).item()
+                
+                image = transforms.functional.resized_crop(image, i, j, h, w, (args.input_height, args.input_width), transforms.functional.InterpolationMode.BILINEAR)
+                gt = transforms.functional.resized_crop(gt, i, j, h, w, (args.input_height, args.input_width), transforms.functional.InterpolationMode.BILINEAR)
+
+                return image, gt
+            
+        # Fallback to central crop
+        in_ratio = float(width) / float(height)
+        if in_ratio < min(ratio):
+            w = width
+            h = int(round(w / min(ratio)))
+        elif in_ratio > max(ratio):
+            h = height
+            w = int(round(h * max(ratio)))
+        else:  # whole image
+            w = width
+            h = height
+        i = (height - h) // 2
+        j = (width - w) // 2
+        
+        image = transforms.functional.resized_crop(image, i, j, h, w, (self.args.input_height, self.args.input_width), transforms.functional.InterpolationMode.BILINEAR)
+        gt = transforms.functional.resized_crop(gt, i, j, h, w, (self.args.input_height, self.args.input_width), transforms.functional.InterpolationMode.BILINEAR)
+
+        return image, gt
     
     def train_preprocess(self, image, gt):
         # Random horizontal flipping
