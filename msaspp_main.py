@@ -11,8 +11,10 @@ import torch.nn.functional
 import torch.multiprocessing as mp
 import torch
 
-from networks.resnet50_3d_gcn_x5 import RESNET50_3D_GCN_X5
-from torchvision.models.resnet import resnet50
+# from networks.resnet50_3d_gcn_x5 import RESNET50_3D_GCN_X5
+# from torchvision.models.resnet import resnet50
+from denseASPP import DenseASPP
+from cfgs import DenseASPP121
 from PIL import Image
 from torch import optim
 from torch.backends import cudnn
@@ -26,7 +28,7 @@ parser.add_argument('--mode',                   type=str,   help='training and t
 parser.add_argument('--model_select',           type=str,   help='Select the model type',   default='resnet')
 
 # Dataset
-parser.add_argument('--data_path',              type=str,   help='training data path',  default=os.path.join(os.getcwd(), 'dataset'))
+parser.add_argument('--data_path',              type=str,   help='training data path',  default=os.getcwd())
 parser.add_argument('--input_height',           type=int,   help='input height',        default=512)
 parser.add_argument('--input_width',            type=int,   help='input width',         default=512)
 
@@ -74,7 +76,6 @@ def poly_lr_scheduler(init_lr, epoch, maxEpoch=args.num_epochs, power=0.9):
     return lr
 
 def main():
-    
     torch.cuda.empty_cache()
     args.distributed = args.world_size > 1 or args.multiprocessing_distributed
     
@@ -90,12 +91,13 @@ def main_worker(ngpus_per_node, args):
     if args.gpu is not None:
         print("Use GPU: {} for training".format(args.gpu))
         
-    if args.model_select == 'resnet':
-        model = resnet50(pretrained=True)
-        del [model.fc, model.avgpool]
+    # if args.model_select == 'resnet':
+    #     model = resnet50(pretrained=True)
+    #     del [model.fc, model.avgpool]
         
-    elif args.model_select == 'glore':
-        model = RESNET50_3D_GCN_X5(num_classes=19, pretrained=False)
+    # elif args.model_select == 'glore':
+    #     model = RESNET50_3D_GCN_X5(num_classes=19, pretrained=False)
+    model = DenseASPP(model_cfg=DenseASPP121.Model_CFG)
     model.train()
     
     if args.distributed:
