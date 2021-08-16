@@ -55,7 +55,6 @@ def preprocessing_transform(mode):
 
 class msasppDataLoader(object):
     def __init__(self, args):
-        self.num_classes = 19
         self.ignore_label = 255
         
         self.class_names = ['unlabelled', 'road', 'sidewalk', 'building', 'wall', 'fence', \
@@ -64,13 +63,12 @@ class msasppDataLoader(object):
                             'motorcycle', 'bicycle']
         
         if args.mode == 'train':
-            self.training_samples = DataLoadPreprocess(quality='fine', args=args, transform=preprocessing_transform(args.mode))
+            self.training_samples = DataLoadPreprocess(self.ignore_label, quality='fine', args=args, transform=preprocessing_transform(args.mode))
             self.data = DataLoader(self.training_samples, args.train_batch_size,
                                    shuffle=True, num_workers=args.num_threads)
 
 class DataLoadPreprocess(Dataset):
-    def __init__(self, quality, args, transform=None):
-        
+    def __init__(self, ignore_label, quality, args, transform=None):
         self.args = args
         self.pair_img = make_dataset(quality, args)
         
@@ -79,12 +77,12 @@ class DataLoadPreprocess(Dataset):
         self.quality = quality
         self.transform = transform
         self.to_tensor = ToTensor
-        self.id_to_trainid = {-1: self.ignore_label, 0: self.ignore_label, 1: self.ignore_label, 2: self.ignore_label,
-                              3: self.ignore_label, 4: self.ignore_label, 5: self.ignore_label, 6: self.ignore_label,
-                              7: 0, 8: 1, 9: self.ignore_label, 10: self.ignore_label, 11: 2, 12: 3, 13: 4,
-                              14: self.ignore_label, 15: self.ignore_label, 16: self.ignore_label, 17: 5,
-                              18: self.ignore_label, 19: 6, 20: 7, 21: 8, 22: 9, 23: 10, 24: 11, 25: 12, 26: 13, 27: 14,
-                              28: 15, 29: self.ignore_label, 30: self.ignore_label, 31: 16, 32: 17, 33: 18}
+        self.id_to_trainid = {-1: ignore_label, 0: ignore_label, 1: ignore_label, 2: ignore_label,
+                              3: ignore_label, 4: ignore_label, 5: ignore_label, 6: ignore_label,
+                              7: 0, 8: 1, 9: ignore_label, 10: ignore_label, 11: 2, 12: 3, 13: 4,
+                              14: ignore_label, 15: ignore_label, 16: ignore_label, 17: 5,
+                              18: ignore_label, 19: 6, 20: 7, 21: 8, 22: 9, 23: 10, 24: 11, 25: 12, 26: 13, 27: 14,
+                              28: 15, 29: ignore_label, 30: ignore_label, 31: 16, 32: 17, 33: 18}
 
         self.void_classes = [0, 1, 2, 3, 4, 5, 6, 9, 10, 14, 15, 16, 18, 29, 30, -1]
         self.valid_classes = [7, 8, 11, 12, 13, 17, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 31, 32, 33]
@@ -94,7 +92,7 @@ class DataLoadPreprocess(Dataset):
         if self.args.mode == 'train':
             img_path, gt_path = self.pair_img[index]
 
-            img, gt = Image.open(img_path).convert('RGB'), Image.open(gt_path)
+            img, gt = Image.open(img_path), Image.open(gt_path)
             gt = np.array(gt)
             mask_copy = gt.copy()
             
@@ -111,7 +109,7 @@ class DataLoadPreprocess(Dataset):
 
             image = np.asarray(image, dtype=np.float32) / 255.0
             gt = np.asarray(gt, dtype=np.float32)
-            gt = np.expand_dims(gt, axis=2)
+            # gt = np.expand_dims(gt, axis=2)
             
             # image, gt = self.random_crop(image, gt, self.args.input_height, self.args.input_width)
             image, gt = self.train_preprocess(image, gt)
@@ -186,8 +184,9 @@ class DataLoadPreprocess(Dataset):
         do_flip = random.random()
         if do_flip > 0.5:
             image = (image[:, ::-1, :]).copy()
-            gt = (gt[:, ::-1, :]).copy()
-        
+            # gt = (gt[:, ::-1, :]).copy()
+            gt = (gt[:, ::-1]).copy()
+            
         # Random gamma, brightness, color augmentation
         do_augment = random.random()
         if do_augment > 0.5:
@@ -224,14 +223,21 @@ class ToTensor(object):
         
     def __call__(self, sample):
         image, gt = sample['image'], sample['gt']
-        image = self.to_tensor(image)
-        gt = self.to_tensor(gt)
+        image, gt = self.to_tensor(sample)
+        # image = self.to_tensor(image)
+        # gt = self.to_tensor(gt)
         
         image = self.normalize(image)
         
         return {'image': image, 'gt': gt}
     
     def to_tensor(self, pic):
-        if isinstance(pic, np.ndarray):
-            image = torch.from_numpy(pic.transpose(2, 0, 1))
-            return image
+        image, gt = pic['image'], pic['gt']
+        
+        if isinstance(image, np.ndarray) and isinstance(gt, np.ndarray):
+            image = torch.from_numpy(image.transpose(2, 0, 1))
+            # gt = torch.from_numpy(np.array(gt, dtype=np.int32)).long()
+            gt = np.expand_dims(np.array(gt, dtype=np.int32), -1).transpose((2, 0, 1))
+            gt = torch.from_numpy(gt[0, :]).long()
+            gt[gt == 255] = 0
+            return image, gt
