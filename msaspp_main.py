@@ -11,10 +11,11 @@ import torch
 # from networks.resnet50_3d_gcn_x5 import RESNET50_3D_GCN_X5
 # from torchvision.models.resnet import resnet50
 from torch.utils.tensorboard import SummaryWriter
+from torchvision import transforms
 from denseASPP import DenseASPP
 from cfgs import DenseASPP121
 from torch.backends import cudnn
-from msaspp_dataloader import msasppDataLoader
+from msaspp_dataloader import msasppDataLoader, colorize_mask
 
 parser = argparse.ArgumentParser(description='Multi-scale ASPP training')
 
@@ -82,12 +83,6 @@ def main_worker(ngpus_per_node, args):
     if args.gpu is not None:
         print("Use GPU: {} for training".format(args.gpu))
         
-    # if args.model_select == 'resnet':
-    #     model = resnet50(pretrained=True)
-    #     del [model.fc, model.avgpool]
-        
-    # elif args.model_select == 'glore':
-    #     model = RESNET50_3D_GCN_X5(num_classes=19, pretrained=False)
     model = DenseASPP(args, model_cfg=DenseASPP121.Model_CFG)
     model.train()
     
@@ -169,14 +164,14 @@ def main_worker(ngpus_per_node, args):
             optimizer.step()
             
             if not args.multiprocessing_distributed or (args.multiprocessing_distributed and args.rank % ngpus_per_node == 0):
-                print('[epoch][s/s_per_e/gs]: [{}][{}/{}/{}], lr: {:.12f}, loss: {:.12f}'.format(epoch, step, steps_per_epoch, global_step, current_lr, loss))
+                print('[epoch][s/s_per_e/gs]: [{}][{}/{}/{}], lr: {:.12f}, loss: {:.12f}'.format(epoch+1, step+1, steps_per_epoch, global_step, current_lr, loss))
                 if np.isnan(loss.cpu().item()):
                     print('NaN in loss occurred. Aborting training.')
                     return -1
                 
             duration += time.time() - befor_op_time
-            if global_step and global_step * args.log_freq == 0:
-                examples_per_sec = args.batch_size / duration * args.log_freq
+            if global_step and global_step % args.log_freq == 0:
+                examples_per_sec = args.train_batch_size / duration * args.log_freq
                 duration = 0
                 time_sofar = (time.time() - start_time) / 3600
                 training_time_left = (num_total_steps / global_step - 1.0) * time_sofar
@@ -188,11 +183,15 @@ def main_worker(ngpus_per_node, args):
                 if not args.multiprocessing_distributed or (args.multiprocessing_distributed and args.rank % ngpus_per_node == 0):
                     writer.add_scalar('loss', loss, global_step=global_step)
                     writer.add_scalar('learning_rate', current_lr, global_step=global_step)
-                    writer.add_scalar('learning_rate', current_lr, global_step=global_step)
                     
                     for i in range(args.num_epochs):
-                        writer.add_image('segmentation_gt/image/{}'.format(i), sample_gt[i, :, :, :].data, global_step=global_step)
-                        writer.add_image('segmentation_est/image/{}'.format(i), output[i, :, :, :].data, global_step=global_step)
+                        output = output.data.cpu().numpy()
+                        output = output.argmax(axis=1)
+                        color_gt = colorize_mask(output[i, :]).convert('RGB')
+                        color_gt = transforms.ToTensor()(color_gt)
+
+                        writer.add_image('segmentation_gt/image/{}'.format(i), torch.unsqueeze(sample_gt, 1)[i, :].data, global_step=global_step)
+                        writer.add_image('segmentation_est/image/{}'.format(i), color_gt.data, global_step=global_step)
                     writer.flush()
                     
             if global_step and global_step % args.save_freq == 0:
@@ -201,203 +200,9 @@ def main_worker(ngpus_per_node, args):
                                   'model': model.state_dict(),
                                   'optimizer': optimizer.state_dict()}
                     torch.save(checkpoint, os.path.join(args.log_directory, args.model_name, 'model', 'model-{}.pth'.format(global_step)))
-                    
-#     if len(args.checkpoint_path) == 0:
-#         curr_epoch = 1
-#         # Initializing 'best_record'
-#         args.best_record = {'epoch': 0, 'val_loss': 1e10, 'acc': 0, 'acc_cls': 0, 'mean_iu': 0, 'fwavacc': 0}
-#     else:
-#         # load the pretrained model
-#         print('training resumes from: ', args.checkpoint_path)
-#         # lambda ==> argument: manipulate(argument)
-#         pretrained_weight = torch.load(args.checkpoint_path, map_location=lambda storage, loc: storage)
-#         """ map_location = lambda storage, loc: storage--> Load all tensors onto the CPU, using a function"""
-#         new_state_dict = OrderedDict()
-#         model_dict = net.state_dict()
-#         for key, value in pretrained_weight.items():
-#             name = key
-#             new_state_dict[name] = value
-#             if name.find('norm') >= 9:
-#                # print('norm contained from pretrained_weight : ', name)
-#                value.requires_grad = False
-#             # if name.find('conv0') >= 9:
-#             #     print('norm contained from pretrained_weight : ', name)
-#             #     value.requires_grad = False
-
-#         # new_state_dict.pop('features.conv0.weight')
-#         new_state_dict.pop('features.norm5.weight')
-#         new_state_dict.pop('features.norm5.bias')
-#         new_state_dict.pop('features.norm5.running_mean')
-#         new_state_dict.pop('features.norm5.running_var')
-#         new_state_dict.pop('classifier.weight')
-#         new_state_dict.pop('classifier.bias')
-#         model_dict.update(new_state_dict)
-#         net.load_state_dict(model_dict)
-#         curr_epoch = 1
-#         args.best_record = {'epoch': 0, 'val_loss': 1e10, 'acc': 0, 'acc_cls': 0, 'mean_iu': 0, 'fwavacc': 0}
-
-#     train_joint_transform = joint_transforms.Compose([
-#         # joint_transforms.ImageScaling(size=[0.5, 2.0]),
-#         joint_transforms.RandomHorizontallyFlip(),
-#         joint_transforms.RandomSizedCrop(size=args.input_width),
-#     ])
-
-#     input_transform = standard_transforms.Compose([
-#         # Colorjitter.ColorJitter(brightness=[-10, 10]),
-#         standard_transforms.ColorJitter(brightness=0.5),
-#         standard_transforms.ToTensor(),
-#         # standard_transforms.Normalize(*my_mean_std)
-#     ])
-
-#     target_transform = extended_transforms.MaskToTensor()
-
-#     train_set = msaspp_dataloader.CityScapes('fine', 'train', joint_transform=train_joint_transform,
-#                                              transform=input_transform, target_transform=target_transform)
-
-#     train_loader = DataLoader(train_set, batch_size=args.train_batch_size, num_workers=args.num_threads, shuffle=True)
-
-#     # optimizer = optim.Adam(net.parameters(), lr=args.learning_rate, weight_decay=args.weight_decay)
-
-#     weight = [[5.0, 5.0, 5.0, 5.1, 5.0,
-#                5.0, 5.75, 5.75, 5.55, 5.55,
-#                5.0, 5.0, 5.0, 5.5, 5.0, 5.2, 5.0,
-#                5.0, 5.4]]
-#     class_weight = torch.FloatTensor(weight)
-#     weighted_criterion = torch.nn.CrossEntropyLoss(ignore_index=msaspp_dataloader.ignore_label,
-#                                                    weight=class_weight).cuda()
-#     # unweighted_criterion = torch.nn.CrossEntropyLoss(ignore_index=segmentation_dataloader.ignore_label).cuda()
-
-#     num_training_samples = len(train_set)
-#     steps_per_epoch = np.ceil(num_training_samples / args.train_batch_size).astype(np.int32)
-#     num_total_steps = args.num_epochs * steps_per_epoch
-
-#     print("total number of samples: {}".format(num_training_samples))
-#     print("total number of steps  : {}".format(num_total_steps))
-
-#     # COUNT_PARAMS
-#     total_num_paramters = 0
-#     for param in net.parameters():
-#         total_num_paramters += np.array(list(param.size())).prod()
-
-#     print("number of trainable parameters: {}".format(total_num_paramters))
-
-#     for epoch in range(curr_epoch, args.num_epochs + 1):
-#         lr_ = poly_lr_scheduler(init_lr=args.learning_rate, epoch=epoch - 1)
-#         optimizer = optim.Adam(net.parameters(), lr=lr_, weight_decay=args.weight_decay)
-
-#         # train(train_loader, net, criterion, optimizer, epoch, args, huber_loss)
-#         train(train_loader, net, weighted_criterion, optimizer, epoch, args)
-
-#     torch.save(net.state_dict(), os.path.join(ckpt_path, 'Model', ImageNet, exp_name_ImageNet,
-#                                               'model-{}'.format(total_num_paramters) + '.pkl'))
-#     print('Training Done!!')
-
-# def train(train_loader, net, weighted_criterion, optimizer, epoch, train_args):
-#     train_loss = AverageMeter()
-#     # loss_seg = AverageMeter()
-#     # loss_seg_v2 = AverageMeter()
-
-#     # curr_iter : total dataset per epoch
-#     curr_iter = (epoch - 1) * len(train_loader)
-#     index = 0
-
-#     start_time = time.time()
-#     # bce_loss = BCEWithLogitsLoss2d()
-#     # loss_D_value = 0
-
-#     net.train()
-#     for step, data in enumerate(train_loader):
-#         predictions_all = []
-#         visual = []
-
-#         inputs, labels, gt_pyramid = data
-#         assert inputs.size()[2:] == labels.size()[1:]
-#         # ignore_mask = (labels.numpy() == 255)
-#         N = inputs.size(0)
-
-#         # D_gt_v = Variable(one_hot(labels)).cuda()
-#         # ignore_mask_gt = (labels.numpy() == 255)
-#         inputs = Variable(inputs).cuda()
-#         labels = Variable(labels).cuda()
-
-#         optimizer.zero_grad()
-
-#         outputs = net(inputs)
-#         assert outputs.size()[2:] == labels.size()[1:]
-#         assert outputs.size()[1] == msaspp_dataloader.num_classes
-#         before_op_time = timeit.default_timer()
-
-#         # output image pyramid
-#         output_np = outputs.data.cpu().numpy()
-#         output_pil = Image.fromarray(output_np.astype(np.uint8)).convert('P')
-#         # weighted_criterion()
-#         loss = weighted_criterion(outputs, labels)
-
-#         # LOSS = loss + 0.05 * semi_loss + 0.01 * semi_loss_v2
-#         duration = timeit.default_timer() - before_op_time
-
-#         # semi_loss.backward()
-#         # semi_loss_v2.backward()
-#         loss.backward()
-#         optimizer.step()
-#         batch_time = time.time() - start_time
-
-#         train_loss.update(loss.data[0], N)
-#         # loss_seg.update(semi_loss.data[0], N)
-#         # loss_seg_v2.update(semi_loss_v2.data[0], N)
-#         curr_iter += 1
-
-#         writer.add_scalar('train_loss',train_loss.avg, curr_iter)
-#         # writer.add_scalar('loss_seg', loss_seg.avg, curr_iter)
-#         # writer.add_scalar('loss_seg_v2', loss_seg_v2.avg, curr_iter)
-#         # writer.add_scalar('LOSS', LOSS, curr_iter)
-
-#         if (step + 1) % train_args.print_frequency == 0:
-#             examples_time = args.train_batch_size / duration
-#             print('epoch: %d | iter: %d / %d | train loss: %.5f | |examples/s: %4.2f | time_elapsed: %.5f''s' %
-#                   (epoch, step + 1, len(train_loader), train_loss.avg, examples_time, batch_time))
-
-#             # print('epoch: %d | iter: %d / %d | loss_D = 4:%.3f | train loss: %.5f |examples/s: %4.2f | time_elapsed: %.5f''s' %
-#             #       (epoch, step + 1, len(train_loader), loss_D_value, train_loss.avg,examples_time, batch_time))
-
-#             # SAVE THE IMAGES AND THE MODEL
-#             if (step + 1) % train_args.model_freq == 0:
-#                 torch.save(net.state_dict(), os.path.join(ckpt_path, 'Model', ImageNet, exp_name_ImageNet,
-#                                                           'model-{}'.format(step + 1) + '.pkl'))
-#                 data_transform = standard_transforms.ToTensor()
-
-#                 np_outputs = outputs.data.cpu().numpy()
-#                 result = np_outputs.argmax(axis=1)
-#                 predictions_all.append(result)
-#             else:
-#                 continue
-
-#             predictions_all = np.concatenate(predictions_all)
-#             for idx, data in enumerate(predictions_all):
-#                 predictions_pil = msaspp_dataloader.colorize_mask(data)
-#                 predictions = data_transform(predictions_pil.convert('RGB'))
-#                 visual.extend([predictions])
-
-#             visual = torch.stack(visual, 0)
-#             visual = vutils.make_grid(visual, nrow=2, padding=0)
-#             # result = np_outputs.argmax(axis=1)[0]
-#             # row, col = result.shape
-#             # dst = np.zeros((row, col, 3), dtype=np.uint8)
-#             #
-#             # for i in range(19):
-#             #     dst[result == i] = COLOR_MAP[i]
-#             # dst = np.array(dst, dtype=np.uint8)
-#             # dst = cv2.cvtColor(dst, cv2.COLOR_RGB2BGR)
-#             # if not os.path.exists(os.path.join(ckpt_path, 'TensorboardX', ImageNet, exp_name_ImageNet, 'prediction')):
-#             #     os.makedirs(os.path.join(ckpt_path, 'TensorboardX', ImageNet, exp_name_ImageNet, 'prediction'))
-#             #
-#             # cv2.imwrite(os.path.join(ckpt_path, 'TensorboardX', ImageNet, exp_name_ImageNet, 'prediction/%06d.png' %
-#             #                          epoch), dst)
-#             writer.add_image('OUTPUT_IMAGE{}'.format(epoch), visual, global_step=step+1)
-
-#     with open(os.path.join(ckpt_path, 'TensorboardX', ImageNet, exp_name_ImageNet, 'LR_v0{}_{}.txt'.format(x,version)), 'a') as LRtxt:
-#         LRtxt.write("index : {}, epoch : {}, learning rate : {: f}".format(index, epoch, optimizer.param_groups[0]['lr']) + '\n')
-#         index += 1
-
+            
+            global_step += 1
+        epoch += 1
+        
 if __name__ == '__main__':
     main()
