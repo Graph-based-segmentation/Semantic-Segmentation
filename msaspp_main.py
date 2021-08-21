@@ -1,12 +1,10 @@
 
 import os
-from random import randrange
 import time
-import timeit
 import argparse
 import numpy as np
-import torch.nn.functional
 import torch.multiprocessing as mp
+import torch.nn.functional as F
 import torch
 
 # from networks.resnet50_3d_gcn_x5 import RESNET50_3D_GCN_X5
@@ -64,9 +62,66 @@ args = parser.parse_args()
 def check_folder(path):
     if not os.path.exists(path):
         os.makedirs(path)
-        
+
+
+def evaluate_model(val_dataloader, model, criterion):
+    eval_iou_score = 0
+    eval_loss = 0
+    for sampled_eval in tqdm(val_dataloader.data):
+        with torch.no_grad():
+            eval_image = sampled_eval['image'].cuda(args.gpu, non_blocking=True)
+            eval_gt = sampled_eval['gt'].cuda(args.gpu, non_blocking=True)
+            
+            eval_output = model(eval_image)
+            model.eval()
+            eval_loss = criterion(eval_output, eval_gt)
+            
+            eval_output = F.softmax(eval_output, dim=1)
+            eval_output = torch.argmax(eval_output, dim=1)
+            eval_output = eval_output.contiguous().view(-1)
+            eval_gt = eval_gt.contiguous().view(-1)
+            
+            iou_per_class = []
+            for num_class in range(len(val_dataloader.class_names)):
+                true_class = (eval_output == num_class)
+                true_label = (eval_gt == num_class)
+                if true_label.long().sum().item() == 0:
+                    iou_per_class.append(np.nan)
+                else:
+                    intersect = torch.logical_and(true_class, true_label).sum().float().item()
+                    union = torch.logical_or(true_class, true_label).sum().float().item()
+                    
+                    iou = (intersect + 1e-10) / (union + 1e-10)
+                    iou_per_class.append(iou)
+                    
+            eval_iou_score += np.nanmean(iou_per_class)
+            eval_loss += eval_loss
+            
+    return eval_loss, eval_iou_score
+    
 def main():
-    check_folder(args.log_directory)
+    model_filename = args.model_name + '.py'
+    commad = 'mkdir ' + os.path.join(os.getcwd(), 'checkpoint', args.model_name)
+    os.system(commad)
+    
+    if args.checkpoint_path == '':
+        aux_out_path = os.path.join(args.log_directory, args.model_name)
+        
+        command = 'cp denseASPP.py' + aux_out_path
+        os.system(command)
+        
+        command = 'cp msaspp_main.py' + aux_out_path
+        os.system(command)
+        
+        command = 'cp msaspp_dataloader' + aux_out_path
+        os.system(command)
+    else:
+        loaded_model_dir = os.path.dirname(args.checkpoint_path)
+        loaded_model_name = os.path.basename(loaded_model_dir)
+        loaded_model_filename = loaded_model_name + '.py'
+        
+        model_out_path = os.path.join(args.checkpoint_path, args.model_name, model_filename)
+        
     torch.cuda.empty_cache()
     args.distributed = args.world_size > 1 or args.multiprocessing_distributed
     
@@ -77,6 +132,7 @@ def main():
         mp.spawn(main_worker, nprocs=ngpus_per_node, args=(ngpus_per_node, args))
     else:
         main_worker(ngpus_per_node, args)
+    
         
 def main_worker(ngpus_per_node, args):
     if args.gpu is not None:
@@ -196,38 +252,7 @@ def main_worker(ngpus_per_node, args):
                     
             if global_step and global_step % args.save_freq == 0:
                 if not args.multiprocessing_distributed or (args.multiprocessing_distributed and args.rank % ngpus_per_node == 0):
-                    eval_iou_score = 0
-                    eval_loss = 0
-                    for sampled_eval in tqdm(val_dataloader.data):
-                        with torch.no_grad():
-                            eval_image = sampled_eval['image'].cuda(args.gpu, non_blocking=True)
-                            eval_gt = sampled_eval['gt'].cuda(args.gpu, non_blocking=True)
-                            
-                            eval_output = model(eval_image)
-                            model.eval()
-                            eval_loss = criterion(eval_output, eval_gt)
-                            
-                            import torch.nn.functional as F
-                            eval_output = F.softmax(eval_output, dim=1)
-                            eval_output = torch.argmax(eval_output, dim=1)
-                            eval_output = eval_output.contiguous().view(-1)
-                            eval_gt = eval_gt.contiguous().view(-1)
-                            
-                            iou_per_class = []
-                            for num_class in range(len(dataloader.class_names)):
-                                true_class = (eval_output == num_class)
-                                true_label = (eval_gt == num_class)
-                                if true_label.long().sum().item() == 0:
-                                    iou_per_class.append(np.nan)
-                                else:
-                                    intersect = torch.logical_and(true_class, true_label).sum().float().item()
-                                    union = torch.logical_or(true_class, true_label).sum().float().item()
-                                    
-                                    iou = (intersect + 1e-10) / (union + 1e-10)
-                                    iou_per_class.append(iou)
-                                    
-                            eval_iou_score += np.nanmean(iou_per_class)
-                            eval_loss += eval_loss
+                    eval_loss, eval_iou_score = evaluate_model(val_dataloader, model, criterion)
                     
                     print_string = 'GPU: {} | Epoch: {}/{} | training loss: {:.5f} | validation average loss: {:.5f} | evaluation mIoU: {:.5f}'
                     print(print_string.format(args.gpu, epoch, args.num_epochs, loss, eval_loss/len(val_dataloader.data), eval_iou_score/len(val_dataloader.data)))
