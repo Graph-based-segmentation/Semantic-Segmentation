@@ -17,6 +17,15 @@ zero_pad = 256 * 3 - len(palette)
 for i in range(zero_pad):
     palette.append(0)
 
+def set_seeds(seed):
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+
 def colorize_mask(mask):
     # mask: numpy array of the mask
     new_mask = Image.fromarray(mask.astype(np.uint8)).convert('P')
@@ -24,7 +33,7 @@ def colorize_mask(mask):
 
     return new_mask
 
-def make_dataset(quality, args):
+def make_dataset(quality, args, mode):
     assert (quality == 'fine' and args.mode in ['train', 'val']) or \
            (quality == 'coarse' and args.mode in ['train', 'train_extra', 'val'])
 
@@ -32,45 +41,69 @@ def make_dataset(quality, args):
         img_dir_name = 'leftImg8bit_trainextra' if args.mode == 'train_extra' else 'leftImg8bit_trainvaltest'
         mask_path = os.path.join(args.data_path, 'gtCoarse', 'gtCoarse', args.mode)
         mask_postfix = '_gtCoarse_labelIds.png'
+        
     else:
         img_dir_name = 'leftImg8bit_trainvaltest'
-        mask_path = os.path.join(args.data_path, 'gtFine_trainvaltest', 'gtFine', args.mode)
         mask_postfix = '_gtFine_labelIds.png'
-    img_path = os.path.join(args.data_path, img_dir_name, 'leftImg8bit', args.mode)
-    assert os.listdir(img_path) == os.listdir(mask_path)
+        
+        if mode == 'train':
+            mask_path = os.path.join(args.data_path, 'gtFine_trainvaltest', 'gtFine', mode)
+            img_path = os.path.join(args.data_path, img_dir_name, 'leftImg8bit', mode)
+        
+        elif mode == 'val':
+            mask_path = os.path.join(args.data_path, 'gtFine_trainvaltest', 'gtFine', mode)
+            img_path = os.path.join(args.data_path, img_dir_name, 'leftImg8bit', mode)
+        
+        elif mode == 'test':
+            mask_path = os.path.join(args.data_path, 'gtFine_trainvaltest', args.mode)
+            img_path = os.path.join(args.data_path, img_dir_name, args.mode)
+            a=1
+            
+        assert os.listdir(img_path) == os.listdir(mask_path)
+        
+        categories = os.listdir(img_path)
+        items = []
+        for category in categories:
+            category_items = [name.split('_leftImg8bit.png')[0] for name in os.listdir(os.path.join(img_path, category))]
+            for c_item in category_items:
+                pair = (os.path.join(img_path, category, c_item + '_leftImg8bit.png'), os.path.join(mask_path, category, c_item + mask_postfix))
+                items.append(pair)
+                
+            # items = [(os.path.join(img_path, category, item + '_leftImg8bit.png'),
+            #           os.path.join(mask_path, category, item + mask_postfix)) for item in category_items]
 
-    items = []
-    categories = os.listdir(img_path)
-    for c in categories:
-        c_items = [name.split('_leftImg8bit.png')[0] for name in os.listdir(os.path.join(img_path, c))]
-
-        for it in c_items:
-            item = (os.path.join(img_path, c, it + '_leftImg8bit.png'), os.path.join(mask_path, c, it + mask_postfix))
-            items.append(item)
-
-    return items
+            return items
 
 def preprocessing_transform(mode):
     return transforms.Compose([ToTensor(mode=mode)])
 
 class msasppDataLoader(object):
-    def __init__(self, args):
+    def __init__(self, args, mode):
         self.ignore_label = 255
-        
-        self.class_names = ['unlabelled', 'road', 'sidewalk', 'building', 'wall', 'fence', \
+        self.class_names = ['road', 'sidewalk', 'building', 'wall', 'fence', \
                             'pole', 'traffic_light', 'traffic_sign', 'vegetation', 'terrain', \
                             'sky', 'person', 'rider', 'car', 'truck', 'bus', 'train', \
                             'motorcycle', 'bicycle']
         
-        if args.mode == 'train':
-            self.training_samples = DataLoadPreprocess(self.ignore_label, quality='fine', args=args, transform=preprocessing_transform(args.mode))
-            self.data = DataLoader(self.training_samples, args.train_batch_size,
+        set_seeds(seed=args.num_seed)        
+        if mode == 'train':
+            self.training_samples = DataLoadPreprocess(self.ignore_label, 'fine', args, mode, transform=preprocessing_transform(args.mode))
+            self.data = DataLoader(self.training_samples, args.batch_size,
+                                   shuffle=True, num_workers=args.num_threads)
+        
+        elif mode == 'val':
+            self.validation_samples = DataLoadPreprocess(self.ignore_label, 'fine', args, mode, transform=preprocessing_transform(args.mode))
+            self.data = DataLoader(self.validation_samples, args.batch_size,
                                    shuffle=True, num_workers=args.num_threads)
 
 class DataLoadPreprocess(Dataset):
-    def __init__(self, ignore_label, quality, args, transform=None):
+    def __init__(self, ignore_label, quality, args, mode, transform=None):
         self.args = args
-        self.pair_img = make_dataset(quality, args)
+        if mode == 'train':
+            self.pair_img = make_dataset(quality, args, mode)
+        elif mode == 'val':
+            self.pair_img = make_dataset(quality, args, mode)
+            
         if len(self.pair_img) == 0:
             raise RuntimeError('Found 0 images, please check the data set')
         
@@ -88,27 +121,27 @@ class DataLoadPreprocess(Dataset):
         """7: road, 8: sidewalk, 11: building, ...."""
 
     def __getitem__(self, index):
-        if self.args.mode == 'train':
-            img_path, gt_path = self.pair_img[index]
+        # if self.args.mode == 'train':
+        img_path, gt_path = self.pair_img[index]
 
-            image, gt = Image.open(img_path), Image.open(gt_path)
-            gt = np.array(gt)
-            gt_copy = gt.copy()
-            
-            for key, value in self.id_to_trainid.items():
-                gt_copy[gt == key] = value
-            gt = Image.fromarray(gt_copy.astype(np.uint8))
-            
-            crop_image, crop_gt = self.random_crop(image, gt, self.args.input_height, self.args.input_width)
+        image, gt = Image.open(img_path), Image.open(gt_path)
+        gt = np.array(gt)
+        gt_copy = gt.copy()
+        
+        for key, value in self.id_to_trainid.items():
+            gt_copy[gt == key] = value
+        gt = Image.fromarray(gt_copy.astype(np.uint8))
+        
+        crop_image, crop_gt = self.random_crop(image, gt, self.args.input_height, self.args.input_width)
 
-            crop_image = np.array(crop_image, dtype=np.float32) / 255.0
-            crop_gt = np.array(crop_gt, dtype=np.float32)
-            image, gt = self.train_preprocess(crop_image, crop_gt)
-            
-            sample = {'image': image, 'gt': gt}
-            if self.transform:
-                sample = self.transform(sample)
-            return sample
+        crop_image = np.array(crop_image, dtype=np.float32) / 255.0
+        crop_gt = np.array(crop_gt, dtype=np.float32)
+        image, gt = self.train_preprocess(crop_image, crop_gt)
+        
+        sample = {'image': image, 'gt': gt}
+        if self.transform:
+            sample = self.transform(sample)
+        return sample
 
     # def rotate_image(self, img, angle, flag=Image.BILINEAR):
     #     result = img.rotate(angle, resample=flag)

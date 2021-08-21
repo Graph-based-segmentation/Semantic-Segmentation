@@ -1,5 +1,6 @@
 
 import os
+from random import randrange
 import time
 import timeit
 import argparse
@@ -10,18 +11,19 @@ import torch
 
 # from networks.resnet50_3d_gcn_x5 import RESNET50_3D_GCN_X5
 # from torchvision.models.resnet import resnet50
+from msaspp_dataloader import msasppDataLoader, colorize_mask
 from torch.utils.tensorboard import SummaryWriter
+from sklearn.metrics import confusion_matrix
 from torchvision import transforms
+from torch.backends import cudnn
 from denseASPP import DenseASPP
 from cfgs import DenseASPP121
-from torch.backends import cudnn
-from msaspp_dataloader import msasppDataLoader, colorize_mask
+from tqdm import tqdm
 
 parser = argparse.ArgumentParser(description='Multi-scale ASPP training')
 
-parser.add_argument('--mode',                   type=str,   help='training and test mode',          default='train')
+parser.add_argument('--mode',                   type=str,   help='training and validation mode',    default='train')
 parser.add_argument('--model_name',             type=str,   help='model name to be trained',        default='denseaspp')
-# parser.add_argument('--model_select',           type=str,   help='Select the model type',   default='resnet')
 
 # Dataset
 parser.add_argument('--data_path',              type=str,   help='training data path',              default=os.getcwd())
@@ -30,15 +32,12 @@ parser.add_argument('--input_width',            type=int,   help='input width', 
 
 # Training
 parser.add_argument('--num_seed',               type=int,   help='random seed number',              default=1)
-parser.add_argument('--train_batch_size',       type=int,   help='train batch size',                default=8)
+parser.add_argument('--batch_size',             type=int,   help='train batch size',                default=8)
 parser.add_argument('--num_epochs',             type=int,   help='number of epochs',                default=80)
 parser.add_argument('--learning_rate',          type=float, help='initial learning rate',           default=3e-4)
 parser.add_argument('--weight_decay',           type=float, help='weight decay factor for optimization',                                default=1e-5)
-# parser.add_argument('--val_batch_size',         type=int,   help='validation batch size', default=4)
-# parser.add_argument('--val_save_to_img_file',   type=bool,  help='save validation image file', default=True)
-# parser.add_argument('--val_img_sample_rate',    type=float, help='randomly sample some validation results to display', default=0.05)
 parser.add_argument('--retrain',                type=bool,  help='If used with checkpoint_path, will restart training from step zero',  default=False)
-
+parser.add_argument('--do_eval',                type=bool,  help='Mod to evaluating the training model',                                default=False)
 # Preprocessing
 parser.add_argument('--random_rotate',          type=bool,  help='if set, will perform random rotation for augmentation',   default=False)
 parser.add_argument('--degree',                 type=float, help='random rotation maximum degree',                          default=2.5)
@@ -46,8 +45,8 @@ parser.add_argument('--degree',                 type=float, help='random rotatio
 # Log and save
 parser.add_argument('--checkpoint_path',        type=str,   help='path to a specific checkpoint to load',               default='')
 parser.add_argument('--log_directory',          type=str,   help='directory to save checkpoints and summaries',         default=os.path.join(os.getcwd(), 'log'))
-parser.add_argument('--log_freq',               type=int,   help='Logging frequency in global steps',                   default=100)
-parser.add_argument('--save_freq',              type=int,   help='Checkpoint saving frequency in global steps',         default=500)
+parser.add_argument('--log_freq',               type=int,   help='Logging frequency in global steps',                   default=1)
+parser.add_argument('--save_freq',              type=int,   help='Checkpoint saving frequency in global steps',         default=5)
 
 # Multi-gpu training
 parser.add_argument('--gpu',            type=int,  help='GPU id to use', default=0)
@@ -128,7 +127,8 @@ def main_worker(ngpus_per_node, args):
         global_step = 0
         
     cudnn.benchmark = True
-    dataloader = msasppDataLoader(args)
+    dataloader = msasppDataLoader(args, mode='train')
+    val_dataloader = msasppDataLoader(args, mode='val')
     
     # Logging
     writer = SummaryWriter(os.path.join(args.log_directory, args.model_name, 'summaries'), flush_secs=30)
@@ -164,19 +164,19 @@ def main_worker(ngpus_per_node, args):
             optimizer.step()
             
             if not args.multiprocessing_distributed or (args.multiprocessing_distributed and args.rank % ngpus_per_node == 0):
-                print('[epoch][s/s_per_e/gs]: [{}][{}/{}/{}], lr: {:.12f}, loss: {:.12f}'.format(epoch+1, step+1, steps_per_epoch, global_step, current_lr, loss))
+                print('[epoch][s/s_per_e/global_step]: [{}/{}][{}/{}/{}], lr: {:.12f}, loss: {:.12f}'.format(epoch+1, args.num_epochs, step+1, steps_per_epoch, global_step, current_lr, loss))
                 if np.isnan(loss.cpu().item()):
                     print('NaN in loss occurred. Aborting training.')
                     return -1
                 
             duration += time.time() - befor_op_time
             if global_step and global_step % args.log_freq == 0:
-                examples_per_sec = args.train_batch_size / duration * args.log_freq
+                examples_per_sec = args.batch_size / duration * args.log_freq
                 duration = 0
                 time_sofar = (time.time() - start_time) / 3600
                 training_time_left = (num_total_steps / global_step - 1.0) * time_sofar
-                if not args.multiprocessing_distributed or (args.multiprocessing_distributed and args.rank % ngpus_per_node == 0):
-                    print("{}".format(args.model_name))
+                # if not args.multiprocessing_distributed or (args.multiprocessing_distributed and args.rank % ngpus_per_node == 0):
+                    # print("{}".format(args.model_name))
                 print_string = 'GPU: {} | examples/s: {:4.2f} | loss: {:.5f} | time elapsed: {:.2f}h | time left: {:.2f}h'
                 print(print_string.format(args.gpu, examples_per_sec, loss, time_sofar, training_time_left))
                 
@@ -184,9 +184,9 @@ def main_worker(ngpus_per_node, args):
                     writer.add_scalar('loss', loss, global_step=global_step)
                     writer.add_scalar('learning_rate', current_lr, global_step=global_step)
                     
-                    for i in range(args.num_epochs):
-                        output = output.data.cpu().numpy()
-                        output = output.argmax(axis=1)
+                    output = output.data.cpu().numpy()
+                    output = output.argmax(axis=1)
+                    for i in range(args.batch_size):
                         color_gt = colorize_mask(output[i, :]).convert('RGB')
                         color_gt = transforms.ToTensor()(color_gt)
 
@@ -195,12 +195,49 @@ def main_worker(ngpus_per_node, args):
                     writer.flush()
                     
             if global_step and global_step % args.save_freq == 0:
-                if not args.multiprocessing_distributed and (args.multiprocessing_distributed and args.rank % ngpus_per_node == 0):
+                if not args.multiprocessing_distributed or (args.multiprocessing_distributed and args.rank % ngpus_per_node == 0):
+                    eval_iou_score = 0
+                    eval_loss = 0
+                    for sampled_eval in tqdm(val_dataloader.data):
+                        with torch.no_grad():
+                            eval_image = sampled_eval['image'].cuda(args.gpu, non_blocking=True)
+                            eval_gt = sampled_eval['gt'].cuda(args.gpu, non_blocking=True)
+                            
+                            eval_output = model(eval_image)
+                            model.eval()
+                            eval_loss = criterion(eval_output, eval_gt)
+                            
+                            import torch.nn.functional as F
+                            eval_output = F.softmax(eval_output, dim=1)
+                            eval_output = torch.argmax(eval_output, dim=1)
+                            eval_output = eval_output.contiguous().view(-1)
+                            eval_gt = eval_gt.contiguous().view(-1)
+                            
+                            iou_per_class = []
+                            for num_class in range(len(dataloader.class_names)):
+                                true_class = (eval_output == num_class)
+                                true_label = (eval_gt == num_class)
+                                if true_label.long().sum().item() == 0:
+                                    iou_per_class.append(np.nan)
+                                else:
+                                    intersect = torch.logical_and(true_class, true_label).sum().float().item()
+                                    union = torch.logical_or(true_class, true_label).sum().float().item()
+                                    
+                                    iou = (intersect + 1e-10) / (union + 1e-10)
+                                    iou_per_class.append(iou)
+                                    
+                            eval_iou_score += np.nanmean(iou_per_class)
+                            eval_loss += eval_loss
+                    
+                    print_string = 'GPU: {} | Epoch: {}/{} | training loss: {:.5f} | validation average loss: {:.5f} | evaluation mIoU: {:.5f}'
+                    print(print_string.format(args.gpu, epoch, args.num_epochs, loss, eval_loss/len(val_dataloader.data), eval_iou_score/len(val_dataloader.data)))
                     checkpoint = {'global_step': global_step,
                                   'model': model.state_dict(),
-                                  'optimizer': optimizer.state_dict()}
-                    torch.save(checkpoint, os.path.join(args.log_directory, args.model_name, 'model', 'model-{}.pth'.format(global_step)))
-            
+                                  'optimizer': optimizer.state_dict(),
+                                  'eval_mIoU': eval_iou_score/len(val_dataloader.data)}
+                    
+                    torch.save(checkpoint, os.path.join(args.log_directory, args.model_name, 'eval_model', 'model-{:07d}_mIoU-{:.3f}.pth'.format(global_step, eval_iou_score/len(val_dataloader.data))))
+                model.train()
             global_step += 1
         epoch += 1
         
