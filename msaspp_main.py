@@ -101,19 +101,19 @@ def evaluate_model(val_dataloader, model, criterion):
     
 def main():
     model_filename = args.model_name + '.py'
-    commad = 'mkdir ' + os.path.join(os.getcwd(), 'checkpoint', args.model_name)
-    os.system(commad)
+    command = 'mkdir ' + os.path.join(args.log_directory, args.model_name, 'model')
+    os.system(command)
     
     if args.checkpoint_path == '':
         aux_out_path = os.path.join(args.log_directory, args.model_name)
         
-        command = 'cp denseASPP.py' + aux_out_path
+        command = 'cp denseASPP.py ' + aux_out_path
         os.system(command)
         
-        command = 'cp msaspp_main.py' + aux_out_path
+        command = 'cp msaspp_main.py ' + aux_out_path
         os.system(command)
         
-        command = 'cp msaspp_dataloader' + aux_out_path
+        command = 'cp msaspp_dataloader.py ' + aux_out_path
         os.system(command)
     else:
         loaded_model_dir = os.path.dirname(args.checkpoint_path)
