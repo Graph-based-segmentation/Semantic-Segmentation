@@ -43,8 +43,8 @@ parser.add_argument('--degree',                 type=float, help='random rotatio
 # Log and save
 parser.add_argument('--checkpoint_path',        type=str,   help='path to a specific checkpoint to load',               default='')
 parser.add_argument('--log_directory',          type=str,   help='directory to save checkpoints and summaries',         default=os.path.join(os.getcwd(), 'log'))
-parser.add_argument('--log_freq',               type=int,   help='Logging frequency in global steps',                   default=1)
-parser.add_argument('--save_freq',              type=int,   help='Checkpoint saving frequency in global steps',         default=5)
+parser.add_argument('--log_freq',               type=int,   help='Logging frequency in global steps',                   default=500)
+parser.add_argument('--save_freq',              type=int,   help='Checkpoint saving frequency in global steps',         default=500)
 
 # Multi-gpu training
 parser.add_argument('--gpu',            type=int,  help='GPU id to use', default=0)
@@ -101,6 +101,9 @@ def evaluate_model(val_dataloader, model, criterion):
     
 def main():
     model_filename = args.model_name + '.py'
+    command = 'mkdir ' + os.path.join(args.log_directory, args.model_name)
+    os.system(command)
+    
     command = 'mkdir ' + os.path.join(args.log_directory, args.model_name, 'model')
     os.system(command)
     
@@ -220,7 +223,7 @@ def main_worker(ngpus_per_node, args):
             optimizer.step()
             
             if not args.multiprocessing_distributed or (args.multiprocessing_distributed and args.rank % ngpus_per_node == 0):
-                print('[epoch][s/s_per_e/global_step]: [{}/{}][{}/{}/{}], lr: {:.12f}, loss: {:.12f}'.format(epoch+1, args.num_epochs, step+1, steps_per_epoch, global_step, current_lr, loss))
+                print('[epoch][s/s_per_e/global_step]: [{}/{}][{}/{}/{}], lr: {:.12f}, loss: {:.12f}'.format(epoch+1, args.num_epochs, step+1, steps_per_epoch, global_step+1, current_lr, loss))
                 if np.isnan(loss.cpu().item()):
                     print('NaN in loss occurred. Aborting training.')
                     return -1
