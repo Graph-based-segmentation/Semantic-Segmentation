@@ -107,6 +107,9 @@ def main():
     command = 'mkdir ' + os.path.join(args.log_directory, args.model_name, 'model')
     os.system(command)
     
+    command = 'mkdir ' + os.path.join(args.log_directory, args.model_name, 'eval_model')
+    os.system(command)
+    
     if args.checkpoint_path == '':
         aux_out_path = os.path.join(args.log_directory, args.model_name)
         
@@ -252,7 +255,12 @@ def main_worker(ngpus_per_node, args):
                         writer.add_image('segmentation_gt/image/{}'.format(i), torch.unsqueeze(sample_gt, 1)[i, :].data, global_step=global_step)
                         writer.add_image('segmentation_est/image/{}'.format(i), color_gt.data, global_step=global_step)
                     writer.flush()
-                    
+                
+                checkpoint = {'global_step': global_step,
+                              'model': model.state_dict(),
+                              'optimizer': optimizer.state_dict()}
+                torch.save(checkpoint, os.path.join(args.log_dirtectory, args.model_name, 'model', 'model-{:07d}.pth'.format(global_step)))
+                
             if global_step and global_step % args.save_freq == 0:
                 if not args.multiprocessing_distributed or (args.multiprocessing_distributed and args.rank % ngpus_per_node == 0):
                     eval_loss, eval_iou_score = evaluate_model(val_dataloader, model, criterion)
@@ -268,6 +276,11 @@ def main_worker(ngpus_per_node, args):
                 model.train()
             global_step += 1
         epoch += 1
-        
+
+    checkpoint = {'global_step': global_step,
+                  'model': model.state_dict(),
+                  'optimizer': optimizer.state_dict()}
+    torch.save(checkpoint, os.path.join(args.log_dirtectory, args.model_name, 'model', 'model-{:07d}.pth'.format(global_step)))
+    
 if __name__ == '__main__':
     main()
