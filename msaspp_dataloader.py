@@ -57,7 +57,6 @@ def make_dataset(quality, args, mode):
         elif mode == 'test':
             mask_path = os.path.join(args.data_path, 'gtFine_trainvaltest', args.mode)
             img_path = os.path.join(args.data_path, img_dir_name, args.mode)
-            a=1
             
         assert os.listdir(img_path) == os.listdir(mask_path)
         
@@ -68,11 +67,8 @@ def make_dataset(quality, args, mode):
             for c_item in category_items:
                 pair = (os.path.join(img_path, category, c_item + '_leftImg8bit.png'), os.path.join(mask_path, category, c_item + mask_postfix))
                 items.append(pair)
-                
-            # items = [(os.path.join(img_path, category, item + '_leftImg8bit.png'),
-            #           os.path.join(mask_path, category, item + mask_postfix)) for item in category_items]
 
-            return items
+    return items
 
 def preprocessing_transform(mode):
     return transforms.Compose([ToTensor(mode=mode)])
