@@ -5,3 +5,4 @@ data
 leftImg8bit
 leftImg8bit_trainvaltest
 gtFine_trainvaltest
+*.pth
