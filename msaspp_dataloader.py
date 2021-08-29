@@ -4,7 +4,7 @@ import numpy as np
 import torch
 
 from torchvision.transforms import functional as F
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import Dataset, DataLoader, dataloader
 from torchvision import transforms
 from PIL import Image
 
@@ -34,8 +34,8 @@ def colorize_mask(mask):
     return new_mask
 
 def make_dataset(quality, args, mode):
-    assert (quality == 'fine' and args.mode in ['train', 'val']) or \
-           (quality == 'coarse' and args.mode in ['train', 'train_extra', 'val'])
+    # assert (quality == 'fine' and args.mode in ['train', 'val']) or \
+    #        (quality == 'coarse' and args.mode in ['train', 'train_extra', 'val'])
 
     if quality == 'coarse':
         img_dir_name = 'leftImg8bit_trainextra' if args.mode == 'train_extra' else 'leftImg8bit_trainvaltest'
@@ -44,7 +44,8 @@ def make_dataset(quality, args, mode):
         
     else:
         img_dir_name = 'leftImg8bit_trainvaltest'
-        mask_postfix = '_gtFine_labelIds.png'
+        # mask_postfix = '_gtFine_labelIds.png'
+        mask_postfix = '_gtFine_color.png'
         
         if mode == 'train':
             mask_path = os.path.join(args.data_path, 'gtFine_trainvaltest', 'gtFine', mode)
@@ -55,8 +56,8 @@ def make_dataset(quality, args, mode):
             img_path = os.path.join(args.data_path, img_dir_name, 'leftImg8bit', mode)
         
         elif mode == 'test':
-            mask_path = os.path.join(args.data_path, 'gtFine_trainvaltest', args.mode)
-            img_path = os.path.join(args.data_path, img_dir_name, args.mode)
+            mask_path = os.path.join(args.data_path, 'gtFine_trainvaltest', mode)
+            img_path = os.path.join(args.data_path, img_dir_name, mode)
             
         assert os.listdir(img_path) == os.listdir(mask_path)
         
@@ -83,14 +84,23 @@ class msasppDataLoader(object):
         
         set_seeds(seed=args.num_seed)        
         if mode == 'train':
+            train_sampler = None
             self.training_samples = DataLoadPreprocess(self.ignore_label, 'fine', args, mode, transform=preprocessing_transform(args.mode))
-            self.data = DataLoader(self.training_samples, args.batch_size,
-                                   shuffle=True, num_workers=args.num_threads)
+            self.data = DataLoader(self.training_samples, args.batch_size, shuffle=(train_sampler is None), 
+                                   num_workers=args.num_threads, 
+                                   pin_memory=True, 
+                                   sampler=train_sampler)
         
         elif mode == 'val':
             self.validation_samples = DataLoadPreprocess(self.ignore_label, 'fine', args, mode, transform=preprocessing_transform(args.mode))
-            self.data = DataLoader(self.validation_samples, args.batch_size,
-                                   shuffle=True, num_workers=args.num_threads)
+            self.data = DataLoader(self.validation_samples, args.batch_size, shuffle=False, 
+                                   num_workers=args.num_threads, 
+                                   pin_memory=True, 
+                                   sampler=None)
+        
+        elif mode == 'test':
+            self.test_samples = DataLoadPreprocess(self.ignore_label, 'fine', args, mode, transform=preprocessing_transform(mode))
+            self.data = DataLoader(self.test_samples, 1, shuffle=False, num_workers=1)
 
 class DataLoadPreprocess(Dataset):
     def __init__(self, ignore_label, quality, args, mode, transform=None):
@@ -98,6 +108,8 @@ class DataLoadPreprocess(Dataset):
         if mode == 'train':
             self.pair_img = make_dataset(quality, args, mode)
         elif mode == 'val':
+            self.pair_img = make_dataset(quality, args, mode)
+        elif mode == 'test':
             self.pair_img = make_dataset(quality, args, mode)
             
         if len(self.pair_img) == 0:
@@ -114,7 +126,6 @@ class DataLoadPreprocess(Dataset):
 
         self.void_classes = [0, 1, 2, 3, 4, 5, 6, 9, 10, 14, 15, 16, 18, 29, 30, -1]
         self.valid_classes = [7, 8, 11, 12, 13, 17, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 31, 32, 33]
-        """7: road, 8: sidewalk, 11: building, ...."""
 
     def __getitem__(self, index):
         # if self.args.mode == 'train':
@@ -126,13 +137,25 @@ class DataLoadPreprocess(Dataset):
         
         for key, value in self.id_to_trainid.items():
             gt_copy[gt == key] = value
-        gt = Image.fromarray(gt_copy.astype(np.uint8))
-        
-        crop_image, crop_gt = self.random_crop(image, gt, self.args.input_height, self.args.input_width)
 
-        crop_image = np.array(crop_image, dtype=np.float32) / 255.0
-        crop_gt = np.array(crop_gt, dtype=np.float32)
-        image, gt = self.train_preprocess(crop_image, crop_gt)
+        # import cv2
+        # COLOR_MAP = [(128, 64, 128), (244, 35, 232), (70, 70, 70), (102, 102, 156), (190, 153, 153), (153, 153, 153),
+        #     (250, 170, 30), (220, 220, 0), (107, 142, 35), (152, 251, 152), (70, 130, 180), (220, 20, 60),
+        #     (255,  0,  0), (0, 0, 142), (0, 0, 70), (0, 60, 100), (0, 80, 100), (0, 0, 230), (119, 11, 32)]
+        # row, col = gt.shape
+        # dst = np.zeros((row, col, 3), dtype=np.uint8)
+        # for i in range(19):
+        #     dst[gt_copy == i] = COLOR_MAP[i]
+        # dst = np.array(dst, dtype=np.uint8)
+        # dst = cv2.cvtColor(dst, cv2.COLOR_RGB2BGR)
+        
+        gt = Image.fromarray(gt_copy.astype(np.uint8))
+
+        rescaled_image, rescaled_gt = self.resize_random_crop(image, gt, self.args.input_height, self.args.input_width)
+
+        rescaled_image = np.array(rescaled_image, dtype=np.float32) / 255.0
+        rescaled_gt = np.array(rescaled_gt, dtype=np.float32)
+        image, gt = self.train_preprocess(rescaled_image, rescaled_gt)
         
         sample = {'image': image, 'gt': gt}
         if self.transform:
@@ -144,11 +167,14 @@ class DataLoadPreprocess(Dataset):
 
     #     return result
 
-    def random_crop(self, image, gt, height, width):
+    def resize_random_crop(self, image, gt, height, width):
         i, j, h, w = transforms.RandomCrop.get_params(image, output_size=(height, width))
         crop_image = F.crop(image, i, j, h, w)
         crop_gt = F.crop(gt, i, j, h, w)
         
+        # r_i, r_j, r_h, r_w = transforms.RandomResizedCrop.get_params(crop_image, scale=[0.5, 2.0], ratio=[0.75, 1.3333333333333333])
+        # rescaled_image = F.crop(crop_image, r_i, r_j, r_h, r_w)
+        # rescaled_gt = F.crop(crop_gt, r_i, r_j, r_h, r_w)
         return crop_image, crop_gt
     
     def train_preprocess(self, image, gt):
