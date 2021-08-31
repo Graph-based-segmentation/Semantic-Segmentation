@@ -21,7 +21,7 @@ from tqdm import tqdm
 parser = argparse.ArgumentParser(description='Multi-scale ASPP training')
 
 parser.add_argument('--mode',                   type=str,   help='training and validation mode',    default='train')
-parser.add_argument('--model_name',             type=str,   help='model name to be trained',        default='denseaspp')
+parser.add_argument('--model_name',             type=str,   help='model name to be trained',        default='denseaspp-v3')
 
 # Dataset
 parser.add_argument('--data_path',              type=str,   help='training data path',              default=os.getcwd())
@@ -36,6 +36,7 @@ parser.add_argument('--learning_rate',          type=float, help='initial learni
 parser.add_argument('--weight_decay',           type=float, help='weight decay factor for optimization',                                default=1e-5)
 parser.add_argument('--retrain',                type=bool,  help='If used with checkpoint_path, will restart training from step zero',  default=False)
 parser.add_argument('--do_eval',                type=bool,  help='Mod to evaluating the training model',                                default=False)
+
 # Preprocessing
 parser.add_argument('--random_rotate',          type=bool,  help='if set, will perform random rotation for augmentation',   default=False)
 parser.add_argument('--degree',                 type=float, help='random rotation maximum degree',                          default=2.5)
@@ -43,7 +44,7 @@ parser.add_argument('--degree',                 type=float, help='random rotatio
 # Log and save
 parser.add_argument('--checkpoint_path',        type=str,   help='path to a specific checkpoint to load',               default='')
 parser.add_argument('--log_directory',          type=str,   help='directory to save checkpoints and summaries',         default=os.path.join(os.getcwd(), 'log'))
-parser.add_argument('--log_freq',               type=int,   help='Logging frequency in global steps',                   default=500)
+parser.add_argument('--log_freq',               type=int,   help='Logging frequency in global steps',                   default=250)
 parser.add_argument('--save_freq',              type=int,   help='Checkpoint saving frequency in global steps',         default=500)
 
 # Multi-gpu training
@@ -203,11 +204,12 @@ def main_worker(ngpus_per_node, args):
     num_total_steps = args.num_epochs * steps_per_epoch
     epoch = global_step // steps_per_epoch
     
+    eval_iou_scores = []
     while epoch < args.num_epochs:
         if args.distributed:
             dataloader.train_sampler.set_epoch(epoch)
             
-        for step, sample_batched in enumerate(dataloader.data):
+        for step, (data_name, sample_batched) in enumerate(dataloader.data):
             optimizer.zero_grad()
             befor_op_time = time.time()
             
@@ -251,7 +253,6 @@ def main_worker(ngpus_per_node, args):
                     for i in range(args.batch_size):
                         color_gt = colorize_mask(output[i, :]).convert('RGB')
                         color_gt = transforms.ToTensor()(color_gt)
-
                         writer.add_image('segmentation_gt/image/{}'.format(i), torch.unsqueeze(sample_gt, 1)[i, :].data, global_step=global_step)
                         writer.add_image('segmentation_est/image/{}'.format(i), color_gt.data, global_step=global_step)
                     writer.flush()
@@ -259,20 +260,23 @@ def main_worker(ngpus_per_node, args):
                 checkpoint = {'global_step': global_step,
                               'model': model.state_dict(),
                               'optimizer': optimizer.state_dict()}
-                torch.save(checkpoint, os.path.join(args.log_dirtectory, args.model_name, 'model', 'model-{:07d}.pth'.format(global_step)))
+                torch.save(checkpoint, os.path.join(args.log_directory, args.model_name, 'model', 'model-{:07d}.pth'.format(global_step)))
                 
             if global_step and global_step % args.save_freq == 0:
                 if not args.multiprocessing_distributed or (args.multiprocessing_distributed and args.rank % ngpus_per_node == 0):
                     eval_loss, eval_iou_score = evaluate_model(val_dataloader, model, criterion)
+                    eval_iou_scores.append(eval_iou_score)
                     
-                    print_string = 'GPU: {} | Epoch: {}/{} | training loss: {:.5f} | validation average loss: {:.5f} | evaluation mIoU: {:.5f}'
-                    print(print_string.format(args.gpu, epoch, args.num_epochs, loss, eval_loss/len(val_dataloader.data), eval_iou_score/len(val_dataloader.data)))
-                    checkpoint = {'global_step': global_step,
-                                  'model': model.state_dict(),
-                                  'optimizer': optimizer.state_dict(),
-                                  'eval_mIoU': eval_iou_score/len(val_dataloader.data)}
-                    
-                    torch.save(checkpoint, os.path.join(args.log_directory, args.model_name, 'eval_model', 'model-{:07d}_mIoU-{:.3f}.pth'.format(global_step, eval_iou_score/len(val_dataloader.data))))
+                    if len(eval_iou_scores) > 1:
+                        if eval_iou_scores[global_step % args.save_freq] < eval_iou_scores[(global_step % args.save_freq) + 1]:
+                            print_string = 'GPU: {} | Epoch: {}/{} | training loss: {:.5f} | validation average loss: {:.5f} | evaluation mIoU: {:.5f}'
+                            print(print_string.format(args.gpu, epoch, args.num_epochs, loss, eval_loss/len(val_dataloader.data), eval_iou_score/len(val_dataloader.data)))
+                            checkpoint = {'global_step': global_step,
+                                          'model': model.state_dict(),
+                                          'optimizer': optimizer.state_dict(),
+                                          'eval_mIoU': eval_iou_scores[(global_step % args.save_freq) + 1]/len(val_dataloader.data)}
+                            
+                            torch.save(checkpoint, os.path.join(args.log_directory, args.model_name, 'eval_model', 'model-{:07d}_mIoU-{:.3f}.pth'.format(global_step, eval_iou_score/len(val_dataloader.data))))
                 model.train()
             global_step += 1
         epoch += 1
@@ -280,7 +284,7 @@ def main_worker(ngpus_per_node, args):
     checkpoint = {'global_step': global_step,
                   'model': model.state_dict(),
                   'optimizer': optimizer.state_dict()}
-    torch.save(checkpoint, os.path.join(args.log_dirtectory, args.model_name, 'model', 'model-{:07d}.pth'.format(global_step)))
+    torch.save(checkpoint, os.path.join(args.log_directory, args.model_name, 'model', 'model-{:07d}.pth'.format(global_step)))
     
 if __name__ == '__main__':
     main()
