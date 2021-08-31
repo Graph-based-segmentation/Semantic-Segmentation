@@ -44,8 +44,7 @@ def make_dataset(quality, args, mode):
         
     else:
         img_dir_name = 'leftImg8bit_trainvaltest'
-        # mask_postfix = '_gtFine_labelIds.png'
-        mask_postfix = '_gtFine_color.png'
+        mask_postfix = '_gtFine_labelIds.png'
         
         if mode == 'train':
             mask_path = os.path.join(args.data_path, 'gtFine_trainvaltest', 'gtFine', mode)
@@ -85,15 +84,15 @@ class msasppDataLoader(object):
         set_seeds(seed=args.num_seed)        
         if mode == 'train':
             train_sampler = None
-            self.training_samples = DataLoadPreprocess(self.ignore_label, 'fine', args, mode, transform=preprocessing_transform(args.mode))
+            self.training_samples = DataLoadPreprocess(self.ignore_label, 'fine', args, mode, transform=preprocessing_transform(mode))
             self.data = DataLoader(self.training_samples, args.batch_size, shuffle=(train_sampler is None), 
                                    num_workers=args.num_threads, 
                                    pin_memory=True, 
                                    sampler=train_sampler)
         
         elif mode == 'val':
-            self.validation_samples = DataLoadPreprocess(self.ignore_label, 'fine', args, mode, transform=preprocessing_transform(args.mode))
-            self.data = DataLoader(self.validation_samples, args.batch_size, shuffle=False, 
+            self.validation_samples = DataLoadPreprocess(self.ignore_label, 'fine', args, mode, transform=preprocessing_transform(mode))
+            self.data = DataLoader(self.validation_samples, 1, shuffle=False, 
                                    num_workers=args.num_threads, 
                                    pin_memory=True, 
                                    sampler=None)
@@ -128,8 +127,8 @@ class DataLoadPreprocess(Dataset):
         self.valid_classes = [7, 8, 11, 12, 13, 17, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 31, 32, 33]
 
     def __getitem__(self, index):
-        # if self.args.mode == 'train':
         img_path, gt_path = self.pair_img[index]
+        data_name = img_path.split('/')[-1].split('_leftImg8bit.png')[0]
 
         image, gt = Image.open(img_path), Image.open(gt_path)
         gt = np.array(gt)
@@ -137,44 +136,43 @@ class DataLoadPreprocess(Dataset):
         
         for key, value in self.id_to_trainid.items():
             gt_copy[gt == key] = value
-
-        # import cv2
-        # COLOR_MAP = [(128, 64, 128), (244, 35, 232), (70, 70, 70), (102, 102, 156), (190, 153, 153), (153, 153, 153),
-        #     (250, 170, 30), (220, 220, 0), (107, 142, 35), (152, 251, 152), (70, 130, 180), (220, 20, 60),
-        #     (255,  0,  0), (0, 0, 142), (0, 0, 70), (0, 60, 100), (0, 80, 100), (0, 0, 230), (119, 11, 32)]
-        # row, col = gt.shape
-        # dst = np.zeros((row, col, 3), dtype=np.uint8)
-        # for i in range(19):
-        #     dst[gt_copy == i] = COLOR_MAP[i]
-        # dst = np.array(dst, dtype=np.uint8)
-        # dst = cv2.cvtColor(dst, cv2.COLOR_RGB2BGR)
-        
         gt = Image.fromarray(gt_copy.astype(np.uint8))
-
-        rescaled_image, rescaled_gt = self.resize_random_crop(image, gt, self.args.input_height, self.args.input_width)
-
-        rescaled_image = np.array(rescaled_image, dtype=np.float32) / 255.0
-        rescaled_gt = np.array(rescaled_gt, dtype=np.float32)
-        image, gt = self.train_preprocess(rescaled_image, rescaled_gt)
         
-        sample = {'image': image, 'gt': gt}
-        if self.transform:
-            sample = self.transform(sample)
-        return sample
+        if self.args.mode == 'train':
+            rescaled_image, rescaled_gt = self.resize_random_crop(image, gt, self.args.input_height, self.args.input_width)
 
+            rescaled_image = np.array(rescaled_image, dtype=np.float32) / 255.0
+            rescaled_gt = np.array(rescaled_gt, dtype=np.float32)
+            image, gt = self.train_preprocess(rescaled_image, rescaled_gt)
+            
+            sample = {'image': image, 'gt': gt}
+            if self.transform:
+                sample = self.transform(sample)
+            return data_name, sample
+            
+        elif self.args.mode == 'val':
+            image = np.array(image, dtype=np.float32) / 255.0
+            gt = np.array(gt, dtype=np.float32)
+            
+            sample = {'image': image, 'gt': gt}
+            sample = self.transform(sample)
+            return data_name, sample
+        
     # def rotate_image(self, img, angle, flag=Image.BILINEAR):
     #     result = img.rotate(angle, resample=flag)
 
     #     return result
 
     def resize_random_crop(self, image, gt, height, width):
-        i, j, h, w = transforms.RandomCrop.get_params(image, output_size=(height, width))
-        crop_image = F.crop(image, i, j, h, w)
-        crop_gt = F.crop(gt, i, j, h, w)
+        scaling = random.uniform(0.5, 2.0)
+        scale_w, scale_h = [int(i*scaling) for i in image.size]
+        resized_image = image.resize((scale_w, scale_h), Image.CUBIC)
+        resized_gt = gt.resize((scale_w, scale_h), Image.NEAREST)
         
-        # r_i, r_j, r_h, r_w = transforms.RandomResizedCrop.get_params(crop_image, scale=[0.5, 2.0], ratio=[0.75, 1.3333333333333333])
-        # rescaled_image = F.crop(crop_image, r_i, r_j, r_h, r_w)
-        # rescaled_gt = F.crop(crop_gt, r_i, r_j, r_h, r_w)
+        i, j, h, w = transforms.RandomCrop.get_params(resized_image, output_size=(height, width))
+        crop_image = F.crop(resized_image, i, j, h, w)
+        crop_gt = F.crop(resized_gt, i, j, h, w)
+
         return crop_image, crop_gt
     
     def train_preprocess(self, image, gt):
