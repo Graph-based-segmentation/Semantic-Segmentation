@@ -92,7 +92,7 @@ class msasppDataLoader(object):
         
         elif mode == 'val':
             self.validation_samples = DataLoadPreprocess(self.ignore_label, 'fine', args, mode, transform=preprocessing_transform(mode))
-            self.data = DataLoader(self.validation_samples, 1, shuffle=False, 
+            self.data = DataLoader(self.validation_samples, args.batch_size, shuffle=False, 
                                    num_workers=args.num_threads, 
                                    pin_memory=True, 
                                    sampler=None)
@@ -103,7 +103,9 @@ class msasppDataLoader(object):
 
 class DataLoadPreprocess(Dataset):
     def __init__(self, ignore_label, quality, args, mode, transform=None):
+        self.mode = mode
         self.args = args
+        
         if mode == 'train':
             self.pair_img = make_dataset(quality, args, mode)
         elif mode == 'val':
@@ -128,7 +130,7 @@ class DataLoadPreprocess(Dataset):
 
     def __getitem__(self, index):
         img_path, gt_path = self.pair_img[index]
-        data_name = img_path.split('/')[-1].split('_leftImg8bit.png')[0]
+        # data_name = img_path.split('/')[-1].split('_leftImg8bit.png')[0]
 
         image, gt = Image.open(img_path), Image.open(gt_path)
         gt = np.array(gt)
@@ -138,25 +140,25 @@ class DataLoadPreprocess(Dataset):
             gt_copy[gt == key] = value
         gt = Image.fromarray(gt_copy.astype(np.uint8))
         
-        if self.args.mode == 'train':
-            rescaled_image, rescaled_gt = self.resize_random_crop(image, gt, self.args.input_height, self.args.input_width)
+        # if self.mode == 'train':
+        rescaled_image, rescaled_gt = self.resize_random_crop(image, gt, self.args.input_height, self.args.input_width)
 
-            rescaled_image = np.array(rescaled_image, dtype=np.float32) / 255.0
-            rescaled_gt = np.array(rescaled_gt, dtype=np.float32)
-            image, gt = self.train_preprocess(rescaled_image, rescaled_gt)
-            
-            sample = {'image': image, 'gt': gt}
-            if self.transform:
-                sample = self.transform(sample)
-            return data_name, sample
-            
-        elif self.args.mode == 'val':
-            image = np.array(image, dtype=np.float32) / 255.0
-            gt = np.array(gt, dtype=np.float32)
-            
-            sample = {'image': image, 'gt': gt}
+        rescaled_image = np.array(rescaled_image, dtype=np.float32) / 255.0
+        rescaled_gt = np.array(rescaled_gt, dtype=np.float32)
+        image, gt = self.train_preprocess(rescaled_image, rescaled_gt)
+        
+        sample = {'image': image, 'gt': gt}
+        if self.transform:
             sample = self.transform(sample)
-            return data_name, sample
+        return sample
+            
+        # elif self.mode == 'val':
+        #     image = np.array(image, dtype=np.float32) / 255.0
+        #     gt = np.array(gt, dtype=np.float32)
+            
+        #     sample = {'image': image, 'gt': gt}
+        #     sample = self.transform(sample)
+        #     return sample
         
     # def rotate_image(self, img, angle, flag=Image.BILINEAR):
     #     result = img.rotate(angle, resample=flag)
