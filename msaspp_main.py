@@ -66,8 +66,8 @@ def check_folder(path):
 
 
 def evaluate_model(val_dataloader, model, criterion):
-    eval_iou_score = 0
-    eval_loss = 0
+    eval_iou_sum_score = 0
+    eval_loss_sum = 0
     for sampled_eval in tqdm(val_dataloader.data):
         with torch.no_grad():
             eval_image = sampled_eval['image'].cuda(args.gpu, non_blocking=True)
@@ -95,10 +95,10 @@ def evaluate_model(val_dataloader, model, criterion):
                     iou = (intersect + 1e-10) / (union + 1e-10)
                     iou_per_class.append(iou)
                     
-            eval_iou_score += np.nanmean(iou_per_class)
-            eval_loss += eval_loss
+            eval_iou_sum_score += np.nanmean(iou_per_class)
+            eval_loss_sum += eval_loss
             
-    return eval_loss, eval_iou_score
+    return eval_loss_sum, eval_iou_sum_score
     
 def main():
     model_filename = args.model_name + '.py'
@@ -205,11 +205,12 @@ def main_worker(ngpus_per_node, args):
     epoch = global_step // steps_per_epoch
     
     eval_iou_scores = []
+    train_loss_list = []
     while epoch < args.num_epochs:
         if args.distributed:
             dataloader.train_sampler.set_epoch(epoch)
             
-        for step, (data_name, sample_batched) in enumerate(dataloader.data):
+        for step, sample_batched in enumerate(dataloader.data):
             optimizer.zero_grad()
             befor_op_time = time.time()
             
@@ -228,11 +229,12 @@ def main_worker(ngpus_per_node, args):
             optimizer.step()
             
             if not args.multiprocessing_distributed or (args.multiprocessing_distributed and args.rank % ngpus_per_node == 0):
-                print('[epoch][s/s_per_e/global_step]: [{}/{}][{}/{}/{}], lr: {:.12f}, loss: {:.12f}'.format(epoch+1, args.num_epochs, step+1, steps_per_epoch, global_step+1, current_lr, loss))
+                print('[epoch][s/s_per_e/global_step]: [{}/{}][{}/{}/{}], lr: {:.12f}, training loss: {:.12f}'.format(epoch+1, args.num_epochs, step+1, steps_per_epoch, global_step+1, current_lr, loss))
                 if np.isnan(loss.cpu().item()):
                     print('NaN in loss occurred. Aborting training.')
                     return -1
                 
+            train_loss_list.append(loss)
             duration += time.time() - befor_op_time
             if global_step and global_step % args.log_freq == 0:
                 examples_per_sec = args.batch_size / duration * args.log_freq
@@ -241,8 +243,8 @@ def main_worker(ngpus_per_node, args):
                 training_time_left = (num_total_steps / global_step - 1.0) * time_sofar
                 # if not args.multiprocessing_distributed or (args.multiprocessing_distributed and args.rank % ngpus_per_node == 0):
                     # print("{}".format(args.model_name))
-                print_string = 'GPU: {} | examples/s: {:4.2f} | loss: {:.5f} | time elapsed: {:.2f}h | time left: {:.2f}h'
-                print(print_string.format(args.gpu, examples_per_sec, loss, time_sofar, training_time_left))
+                print_string = 'GPU: {} | examples/s: {:4.2f} | Average training loss: {:.5f} | time elapsed: {:.2f}h | time left: {:.2f}h'
+                print(print_string.format(args.gpu, examples_per_sec, sum(train_loss_list)/len(train_loss_list), time_sofar, training_time_left))
                 
                 if not args.multiprocessing_distributed or (args.multiprocessing_distributed and args.rank % ngpus_per_node == 0):
                     writer.add_scalar('loss', loss, global_step=global_step)
@@ -264,13 +266,13 @@ def main_worker(ngpus_per_node, args):
                 
             if global_step and global_step % args.save_freq == 0:
                 if not args.multiprocessing_distributed or (args.multiprocessing_distributed and args.rank % ngpus_per_node == 0):
-                    eval_loss, eval_iou_score = evaluate_model(val_dataloader, model, criterion)
-                    eval_iou_scores.append(eval_iou_score)
+                    eval_loss_sum, eval_iou_sum_score = evaluate_model(val_dataloader, model, criterion)
+                    eval_iou_scores.append(eval_iou_sum_score)
                     
                     if len(eval_iou_scores) > 1:
                         if eval_iou_scores[global_step % args.save_freq] < eval_iou_scores[(global_step % args.save_freq) + 1]:
-                            print_string = 'GPU: {} | Epoch: {}/{} | training loss: {:.5f} | validation average loss: {:.5f} | evaluation mIoU: {:.5f}'
-                            print(print_string.format(args.gpu, epoch, args.num_epochs, loss, eval_loss/len(val_dataloader.data), eval_iou_score/len(val_dataloader.data)))
+                            print_string = 'GPU: {} | Epoch: {}/{} | Average training loss: {:.5f} | Average validation loss: {:.5f} | evaluation mIoU: {:.5f}'
+                            print(print_string.format(args.gpu, epoch, args.num_epochs, sum(train_loss_list)/len(train_loss_list), eval_loss_sum/len(val_dataloader.data), eval_iou_sum_score/len(val_dataloader.data)))
                             checkpoint = {'global_step': global_step,
                                           'model': model.state_dict(),
                                           'optimizer': optimizer.state_dict(),
