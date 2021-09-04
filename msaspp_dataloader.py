@@ -50,9 +50,9 @@ def make_dataset(quality, args, mode):
             mask_path = os.path.join(args.data_path, 'gtFine_trainvaltest', 'gtFine', mode)
             img_path = os.path.join(args.data_path, img_dir_name, 'leftImg8bit', mode)
         
-        elif mode == 'val':
-            mask_path = os.path.join(args.data_path, 'gtFine_trainvaltest', 'gtFine', mode)
-            img_path = os.path.join(args.data_path, img_dir_name, 'leftImg8bit', mode)
+        elif mode == 'val' or mode == 'eval':
+            mask_path = os.path.join(args.data_path, 'gtFine_trainvaltest', 'gtFine', 'val')
+            img_path = os.path.join(args.data_path, img_dir_name, 'leftImg8bit', 'val')
         
         assert os.listdir(img_path) == os.listdir(mask_path)
         
@@ -92,9 +92,14 @@ class msasppDataLoader(object):
                                    num_workers=args.num_threads, 
                                    pin_memory=True, 
                                    sampler=None)
+        elif mode == 'eval':
+            self.validation_samples = DataLoadPreprocess(self.ignore_label, 'fine', args, mode, transform=preprocessing_transform(mode))
+            self.data = DataLoader(self.validation_samples, 1, shuffle=False, num_workers=1)
+            
         
 class DataLoadPreprocess(Dataset):
     def __init__(self, ignore_label, quality, args, mode, transform=None):
+        self.mode = mode
         self.args = args
         self.pair_img = make_dataset(quality, args, mode)
             
@@ -115,9 +120,7 @@ class DataLoadPreprocess(Dataset):
 
     def __getitem__(self, index):
         img_path, gt_path = self.pair_img[index]
-        # data_name = img_path.split('/')[-1].split('_leftImg8bit.png')[0]
-        # if data_name != 'berlin_000004_000019':
-        #     return -1, -1
+        data_name = img_path.split('/')[-1].split('_leftImg8bit.png')[0]
         
         image, gt = Image.open(img_path), Image.open(gt_path)
         gt = np.array(gt)
@@ -134,8 +137,11 @@ class DataLoadPreprocess(Dataset):
         image, gt = self.train_preprocess(rescaled_image, rescaled_gt)
         
         sample = {'image': image, 'gt': gt}
-        if self.transform:
-            sample = self.transform(sample)
+        sample = self.transform(sample)
+        
+        if self.mode == 'eval':
+            return data_name, sample
+        
         return sample
             
         # elif self.mode == 'val':
