@@ -211,6 +211,7 @@ def main_worker(ngpus_per_node, args):
             dataloader.train_sampler.set_epoch(epoch)
             
         for step, sample_batched in enumerate(dataloader.data):
+            # if sample_batched == -1: continue            
             optimizer.zero_grad()
             befor_op_time = time.time()
             
@@ -229,7 +230,7 @@ def main_worker(ngpus_per_node, args):
             optimizer.step()
             
             if not args.multiprocessing_distributed or (args.multiprocessing_distributed and args.rank % ngpus_per_node == 0):
-                print('[epoch][s/s_per_e/global_step]: [{}/{}][{}/{}/{}], lr: {:.12f}, training loss: {:.12f}'.format(epoch+1, args.num_epochs, step+1, steps_per_epoch, global_step+1, current_lr, loss))
+                print('[epoch][s/s_per_e/global_step]: [{}/{}][{}/{}/{}], lr: {:.12f}, train loss: {:.12f}'.format(epoch+1, args.num_epochs, step+1, steps_per_epoch, global_step+1, current_lr, loss))
                 if np.isnan(loss.cpu().item()):
                     print('NaN in loss occurred. Aborting training.')
                     return -1
@@ -243,7 +244,7 @@ def main_worker(ngpus_per_node, args):
                 training_time_left = (num_total_steps / global_step - 1.0) * time_sofar
                 # if not args.multiprocessing_distributed or (args.multiprocessing_distributed and args.rank % ngpus_per_node == 0):
                     # print("{}".format(args.model_name))
-                print_string = 'GPU: {} | examples/s: {:4.2f} | Average training loss: {:.5f} | time elapsed: {:.2f}h | time left: {:.2f}h'
+                print_string = 'GPU: {} | examples/s: {:4.2f} | Average train loss: {:.5f} | time elapsed: {:.2f}h | time left: {:.2f}h'
                 print(print_string.format(args.gpu, examples_per_sec, sum(train_loss_list)/len(train_loss_list), time_sofar, training_time_left))
                 
                 if not args.multiprocessing_distributed or (args.multiprocessing_distributed and args.rank % ngpus_per_node == 0):
@@ -271,7 +272,7 @@ def main_worker(ngpus_per_node, args):
                     
                     if len(eval_iou_scores) > 1:
                         if eval_iou_scores[global_step % args.save_freq] < eval_iou_scores[(global_step % args.save_freq) + 1]:
-                            print_string = 'GPU: {} | Epoch: {}/{} | Average training loss: {:.5f} | Average validation loss: {:.5f} | evaluation mIoU: {:.5f}'
+                            print_string = 'GPU: {} | Epoch: {}/{} | Average train loss: {:.5f} | Average validation loss: {:.5f} | evaluation mIoU: {:.5f}'
                             print(print_string.format(args.gpu, epoch, args.num_epochs, sum(train_loss_list)/len(train_loss_list), eval_loss_sum/len(val_dataloader.data), eval_iou_sum_score/len(val_dataloader.data)))
                             checkpoint = {'global_step': global_step,
                                           'model': model.state_dict(),
