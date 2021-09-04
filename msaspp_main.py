@@ -168,6 +168,7 @@ def main_worker(ngpus_per_node, args):
     global_step = 0
     optimizer = torch.optim.Adam(model.parameters(), weight_decay=args.weight_decay, lr=args.learning_rate)
     
+    model_just_loaded = False
     if args.checkpoint_path != '':
         if os.path.isfile(args.checkpoint_path):
             print("Loading checkpoint '{}'".format(args.checkpoint_path))
@@ -185,6 +186,7 @@ def main_worker(ngpus_per_node, args):
         
         else:
             print("No checkpoint found at '{}'".format(args.checkpoint_path))
+        model_just_loaded = True
             
     if args.retrain:
         global_step = 0
@@ -236,7 +238,7 @@ def main_worker(ngpus_per_node, args):
                 
             train_loss_list.append(loss)
             duration += time.time() - befor_op_time
-            if global_step and global_step % args.log_freq == 0:
+            if global_step and global_step % args.log_freq == 0 and not model_just_loaded:
                 examples_per_sec = args.batch_size / duration * args.log_freq
                 duration = 0
                 time_sofar = (time.time() - start_time) / 3600
@@ -264,7 +266,7 @@ def main_worker(ngpus_per_node, args):
                               'optimizer': optimizer.state_dict()}
                 torch.save(checkpoint, os.path.join(args.log_directory, args.model_name, 'model', 'model-{:07d}.pth'.format(global_step)))
                 
-            if global_step and global_step % args.save_freq == 0:
+            if global_step and global_step % args.save_freq == 0 and not model_just_loaded:
                 if not args.multiprocessing_distributed or (args.multiprocessing_distributed and args.rank % ngpus_per_node == 0):
                     eval_loss_sum, eval_iou_sum_score = evaluate_model(val_dataloader, model, criterion)
                     mIoU = eval_iou_sum_score / len(val_dataloader.data)
@@ -294,6 +296,8 @@ def main_worker(ngpus_per_node, args):
                     
                         torch.save(checkpoint, os.path.join(args.log_directory, args.model_name, 'eval_model', 'model-{:07d}_mIoU-{:.3f}.pth'.format(global_step, max(mIoU_list))))
                 model.train()
+            
+            model_just_loaded = False
             global_step += 1
         epoch += 1
 
