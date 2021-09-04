@@ -1,0 +1,8 @@
+__pycache__
+*.json
+*.pyc
+data
+leftImg8bit
+leftImg8bit_trainvaltest
+gtFine_trainvaltest
+log/

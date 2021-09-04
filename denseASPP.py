@@ -9,9 +9,11 @@ class DenseASPP(nn.Module):
     """
     * output_scale can only set as 8 or 16
     """
-    def __init__(self, model_cfg, n_class=19, output_stride=8):
+    def __init__(self, args, model_cfg, n_class=19, output_stride=8):
+    # def __init__(self, model_cfg, n_class=19, output_stride=8):
         super(DenseASPP, self).__init__()
-        bn_size = model_cfg['bn_size']
+        # bn_size = model_cfg['bn_size']
+        bn_size = args.batch_size
         drop_rate = model_cfg['drop_rate']
         growth_rate = model_cfg['growth_rate']
         num_init_features = model_cfg['num_init_features']
@@ -147,14 +149,14 @@ class _DenseAsppBlock(nn.Sequential):
     def __init__(self, input_num, num1, num2, dilation_rate, drop_out, bn_start=True):
         super(_DenseAsppBlock, self).__init__()
         if bn_start:
-            self.add_module('norm.1', bn(input_num, momentum=0.0003)),
+            self.add_module('norm1', bn(input_num, momentum=0.0003)),
 
-        self.add_module('relu.1', nn.ReLU(inplace=True)),
-        self.add_module('conv.1', nn.Conv2d(in_channels=input_num, out_channels=num1, kernel_size=1)),
+        self.add_module('relu1', nn.ReLU(inplace=True)),
+        self.add_module('conv1', nn.Conv2d(in_channels=input_num, out_channels=num1, kernel_size=1)),
 
-        self.add_module('norm.2', bn(num1, momentum=0.0003)),
-        self.add_module('relu.2', nn.ReLU(inplace=True)),
-        self.add_module('conv.2', nn.Conv2d(in_channels=num1, out_channels=num2, kernel_size=3,
+        self.add_module('norm2', bn(num1, momentum=0.0003)),
+        self.add_module('relu2', nn.ReLU(inplace=True)),
+        self.add_module('conv2', nn.Conv2d(in_channels=num1, out_channels=num2, kernel_size=3,
                                             dilation=dilation_rate, padding=dilation_rate)),
 
         self.drop_rate = drop_out
@@ -171,13 +173,13 @@ class _DenseAsppBlock(nn.Sequential):
 class _DenseLayer(nn.Sequential):
     def __init__(self, num_input_features, growth_rate, bn_size, drop_rate, dilation_rate=1):
         super(_DenseLayer, self).__init__()
-        self.add_module('norm.1', bn(num_input_features)),
-        self.add_module('relu.1', nn.ReLU(inplace=True)),
-        self.add_module('conv.1', nn.Conv2d(num_input_features, bn_size * growth_rate, kernel_size=1, stride=1, bias=False)),
+        self.add_module('norm1', bn(num_input_features)),
+        self.add_module('relu1', nn.ReLU(inplace=True)),
+        self.add_module('conv1', nn.Conv2d(num_input_features, bn_size * growth_rate, kernel_size=1, stride=1, bias=False)),
 
-        self.add_module('norm.2', bn(bn_size * growth_rate)),
-        self.add_module('relu.2', nn.ReLU(inplace=True)),
-        self.add_module('conv.2', nn.Conv2d(bn_size * growth_rate, growth_rate,
+        self.add_module('norm2', bn(bn_size * growth_rate)),
+        self.add_module('relu2', nn.ReLU(inplace=True)),
+        self.add_module('conv2', nn.Conv2d(bn_size * growth_rate, growth_rate,
                         kernel_size=3, stride=1, dilation=dilation_rate, padding=dilation_rate, bias=False)),
         self.drop_rate = drop_rate
 
