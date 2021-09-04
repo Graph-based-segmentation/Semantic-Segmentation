@@ -204,14 +204,13 @@ def main_worker(ngpus_per_node, args):
     num_total_steps = args.num_epochs * steps_per_epoch
     epoch = global_step // steps_per_epoch
     
-    eval_iou_scores = []
+    mIoU_list = []
     train_loss_list = []
     while epoch < args.num_epochs:
         if args.distributed:
             dataloader.train_sampler.set_epoch(epoch)
             
         for step, sample_batched in enumerate(dataloader.data):
-            # if sample_batched == -1: continue            
             optimizer.zero_grad()
             befor_op_time = time.time()
             
@@ -268,18 +267,32 @@ def main_worker(ngpus_per_node, args):
             if global_step and global_step % args.save_freq == 0:
                 if not args.multiprocessing_distributed or (args.multiprocessing_distributed and args.rank % ngpus_per_node == 0):
                     eval_loss_sum, eval_iou_sum_score = evaluate_model(val_dataloader, model, criterion)
-                    eval_iou_scores.append(eval_iou_sum_score)
+                    mIoU = eval_iou_sum_score / len(val_dataloader.data)
+                    mIoU_list.append(mIoU)
                     
-                    if len(eval_iou_scores) > 1:
-                        if eval_iou_scores[global_step % args.save_freq] < eval_iou_scores[(global_step % args.save_freq) + 1]:
-                            print_string = 'GPU: {} | Epoch: {}/{} | Average train loss: {:.5f} | Average validation loss: {:.5f} | evaluation mIoU: {:.5f}'
-                            print(print_string.format(args.gpu, epoch, args.num_epochs, sum(train_loss_list)/len(train_loss_list), eval_loss_sum/len(val_dataloader.data), eval_iou_sum_score/len(val_dataloader.data)))
-                            checkpoint = {'global_step': global_step,
-                                          'model': model.state_dict(),
-                                          'optimizer': optimizer.state_dict(),
-                                          'eval_mIoU': eval_iou_scores[(global_step % args.save_freq) + 1]/len(val_dataloader.data)}
-                            
-                            torch.save(checkpoint, os.path.join(args.log_directory, args.model_name, 'eval_model', 'model-{:07d}_mIoU-{:.3f}.pth'.format(global_step, eval_iou_scores/len(val_dataloader.data))))
+                    idx_max = mIoU_list.index(max(mIoU_list))
+                    if idx_max == 0 and idx_max == (global_step // args.save_freq - 1):
+                        print_string = 'GPU: {} | Epoch: {}/{} | Average train loss: {:.5f} | Average validation loss: {:.5f} | evaluation mIoU: {:.5f}'
+                        print(print_string.format(args.gpu, epoch, args.num_epochs, sum(train_loss_list)/len(train_loss_list), eval_loss_sum/len(val_dataloader.data), mIoU_list[idx_max]))
+                        checkpoint = {'global_step': global_step,
+                                      'model': model.state_dict(),
+                                      'optimizer': optimizer.state_dict(),
+                                      'eval_mIoU': mIoU_list[idx_max]}
+                        
+                        torch.save(checkpoint, os.path.join(args.log_directory, args.model_name, 'eval_model', 'model-{:07d}_mIoU-{:.3f}.pth'.format(global_step, mIoU_list[idx_max])))
+
+                    elif idx_max == 0 and idx_max != (global_step // args.save_freq - 1):
+                        pass
+                    
+                    elif idx_max !=0 and idx_max == (global_step // args.save_freq - 1):
+                        print_string = 'GPU: {} | Epoch: {}/{} | Average train loss: {:.5f} | Average validation loss: {:.5f} | evaluation mIoU: {:.5f}'
+                        print(print_string.format(args.gpu, epoch, args.num_epochs, sum(train_loss_list)/len(train_loss_list), eval_loss_sum/len(val_dataloader.data), max(mIoU_list)))
+                        checkpoint = {'global_step': global_step,
+                                      'model': model.state_dict(),
+                                      'optimizer': optimizer.state_dict(),
+                                      'eval_mIoU': max(mIoU_list)}
+                    
+                        torch.save(checkpoint, os.path.join(args.log_directory, args.model_name, 'eval_model', 'model-{:07d}_mIoU-{:.3f}.pth'.format(global_step, max(mIoU_list))))
                 model.train()
             global_step += 1
         epoch += 1
