@@ -279,7 +279,7 @@ def main_worker(ngpus_per_node, args):
                                           'optimizer': optimizer.state_dict(),
                                           'eval_mIoU': eval_iou_scores[(global_step % args.save_freq) + 1]/len(val_dataloader.data)}
                             
-                            torch.save(checkpoint, os.path.join(args.log_directory, args.model_name, 'eval_model', 'model-{:07d}_mIoU-{:.3f}.pth'.format(global_step, eval_iou_score/len(val_dataloader.data))))
+                            torch.save(checkpoint, os.path.join(args.log_directory, args.model_name, 'eval_model', 'model-{:07d}_mIoU-{:.3f}.pth'.format(global_step, eval_iou_scores/len(val_dataloader.data))))
                 model.train()
             global_step += 1
         epoch += 1
