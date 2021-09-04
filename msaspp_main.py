@@ -112,10 +112,12 @@ def main():
     os.system(command)
     
     if args.checkpoint_path == '':
-        aux_out_path = os.path.join(args.log_directory, args.model_name)
+        model_out_path = os.path.join(args.log_directory, args.model_name, model_filename)
         
-        command = 'cp denseASPP.py ' + aux_out_path
+        command = 'cp denseASPP.py ' + model_out_path
         os.system(command)
+        
+        aux_out_path = os.path.join(args.log_directory, args.model_name)
         
         command = 'cp msaspp_main.py ' + aux_out_path
         os.system(command)
@@ -123,11 +125,14 @@ def main():
         command = 'cp msaspp_dataloader.py ' + aux_out_path
         os.system(command)
     else:
+        args.checkpoint_path = os.path.join(args.checkpoint_path, args.model_name, 'model')
         loaded_model_dir = os.path.dirname(args.checkpoint_path)
         loaded_model_name = os.path.basename(loaded_model_dir)
         loaded_model_filename = loaded_model_name + '.py'
         
-        model_out_path = os.path.join(args.checkpoint_path, args.model_name, model_filename)
+        model_out_path = os.path.join(args.log_directory, args.model_name, model_filename)
+        command = 'cp ' + os.path.join(loaded_model_dir, loaded_model_filename) + ' ' + model_out_path
+        os.system(command)
         
     torch.cuda.empty_cache()
     args.distributed = args.world_size > 1 or args.multiprocessing_distributed
