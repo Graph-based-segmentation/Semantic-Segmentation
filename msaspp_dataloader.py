@@ -127,14 +127,6 @@ class DataLoadPreprocess(Dataset):
             gt_copy[gt == key] = value
         gt = Image.fromarray(gt_copy.astype(np.uint8))
         
-        if self.args.mode == 'test':
-            image = np.array(image, dtype=np.float32) / 255.0
-            gt = np.array(gt, dtype=np.float32)
-            
-            sample = {'image': image, 'gt': gt}
-            sample = self.transform(sample)
-            return sample
-            
         rescaled_image, rescaled_gt = self.resize_random_crop(image, gt, self.args.input_height, self.args.input_width)
 
         rescaled_image = np.array(rescaled_image, dtype=np.float32) / 255.0
