@@ -54,10 +54,6 @@ def make_dataset(quality, args, mode):
             mask_path = os.path.join(args.data_path, 'gtFine_trainvaltest', 'gtFine', mode)
             img_path = os.path.join(args.data_path, img_dir_name, 'leftImg8bit', mode)
         
-        elif mode == 'test':
-            mask_path = os.path.join(args.data_path, 'gtFine_trainvaltest', mode)
-            img_path = os.path.join(args.data_path, img_dir_name, mode)
-            
         assert os.listdir(img_path) == os.listdir(mask_path)
         
         categories = os.listdir(img_path)
@@ -81,7 +77,7 @@ class msasppDataLoader(object):
                             'sky', 'person', 'rider', 'car', 'truck', 'bus', 'train', \
                             'motorcycle', 'bicycle']
         
-        set_seeds(seed=args.num_seed)        
+        set_seeds(seed=args.num_seed)
         if mode == 'train':
             train_sampler = None
             self.training_samples = DataLoadPreprocess(self.ignore_label, 'fine', args, mode, transform=preprocessing_transform(mode))
@@ -97,21 +93,10 @@ class msasppDataLoader(object):
                                    pin_memory=True, 
                                    sampler=None)
         
-        elif mode == 'test':
-            self.test_samples = DataLoadPreprocess(self.ignore_label, 'fine', args, mode, transform=preprocessing_transform(mode))
-            self.data = DataLoader(self.test_samples, 1, shuffle=False, num_workers=1)
-
 class DataLoadPreprocess(Dataset):
     def __init__(self, ignore_label, quality, args, mode, transform=None):
-        self.mode = mode
         self.args = args
-        
-        if mode == 'train':
-            self.pair_img = make_dataset(quality, args, mode)
-        elif mode == 'val':
-            self.pair_img = make_dataset(quality, args, mode)
-        elif mode == 'test':
-            self.pair_img = make_dataset(quality, args, mode)
+        self.pair_img = make_dataset(quality, args, mode)
             
         if len(self.pair_img) == 0:
             raise RuntimeError('Found 0 images, please check the data set')
@@ -131,7 +116,9 @@ class DataLoadPreprocess(Dataset):
     def __getitem__(self, index):
         img_path, gt_path = self.pair_img[index]
         # data_name = img_path.split('/')[-1].split('_leftImg8bit.png')[0]
-
+        # if data_name != 'berlin_000004_000019':
+        #     return -1, -1
+        
         image, gt = Image.open(img_path), Image.open(gt_path)
         gt = np.array(gt)
         gt_copy = gt.copy()
@@ -140,7 +127,14 @@ class DataLoadPreprocess(Dataset):
             gt_copy[gt == key] = value
         gt = Image.fromarray(gt_copy.astype(np.uint8))
         
-        # if self.mode == 'train':
+        if self.args.mode == 'test':
+            image = np.array(image, dtype=np.float32) / 255.0
+            gt = np.array(gt, dtype=np.float32)
+            
+            sample = {'image': image, 'gt': gt}
+            sample = self.transform(sample)
+            return sample
+            
         rescaled_image, rescaled_gt = self.resize_random_crop(image, gt, self.args.input_height, self.args.input_width)
 
         rescaled_image = np.array(rescaled_image, dtype=np.float32) / 255.0
@@ -193,12 +187,12 @@ class DataLoadPreprocess(Dataset):
 
     def augment_image(self, image):
         # gamma augmentation
-        gamma  = random.uniform(0.5, 2.0)
-        image_aug = image ** gamma
+        # gamma  = random.uniform(0.5, 2.0)
+        # image_aug = image ** gamma
         
         # brightness augmentation
         brightness = random.uniform(-10, 10)
-        image_aug = image_aug * brightness
+        image_aug = image * brightness
         
         # color augmentation
         # colors = np.random.uniform(0.9, 1.1, size=3)
