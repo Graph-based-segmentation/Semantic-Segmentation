@@ -1,4 +1,3 @@
-<<<<<<< HEAD
 # Multi-Scale Atrous Spatial Pyramid Pooling for Larger and Denser receptive field in Semantic Segmentation
 
 ## Introduction
@@ -18,7 +17,3 @@ Our team is still organizing the code, so the readability of the code is low.
 
 ### Predicted image
 ![cityscapes_image](./test_image/Semantic_Segmentation.JPG)
-=======
-# SpyGR-segmentation
-SpyGR code after paper review
->>>>>>> fcca632a5229680c3b6ce3b677330a69d4527d53
