@@ -66,7 +66,8 @@ def check_folder(path):
 
 
 def evaluate_model(val_dataloader, model, criterion):
-    eval_iou_sum_score = 0
+    eval_miou_sum = 0
+    # sum_iou_class = 0
     eval_loss_sum = 0
     for sampled_eval in tqdm(val_dataloader.data):
         with torch.no_grad():
@@ -94,11 +95,12 @@ def evaluate_model(val_dataloader, model, criterion):
                     
                     iou = (intersect + 1e-10) / (union + 1e-10)
                     iou_per_class.append(iou)
-                    
-            eval_iou_sum_score += np.nanmean(iou_per_class)
+            
+            eval_miou_sum += np.nanmean(iou_per_class)
+            # sum_iou_class += sum(iou_per_class)
             eval_loss_sum += eval_loss
             
-    return eval_loss_sum, eval_iou_sum_score
+    return eval_loss_sum, eval_miou_sum
     
 def main():
     model_filename = args.model_name + '.py'
@@ -273,8 +275,9 @@ def main_worker(ngpus_per_node, args):
                 
             if global_step and global_step % args.save_freq == 0 and not model_just_loaded:
                 if not args.multiprocessing_distributed or (args.multiprocessing_distributed and args.rank % ngpus_per_node == 0):
-                    eval_loss_sum, eval_iou_sum_score = evaluate_model(val_dataloader, model, criterion)
-                    mIoU = eval_iou_sum_score / len(val_dataloader.data)
+                    eval_loss_sum, eval_miou_sum = evaluate_model(val_dataloader, model, criterion)
+                    # eval_loss_sum, sum_iou_class = evaluate_model(val_dataloader, model, criterion)
+                    mIoU = eval_miou_sum / len(val_dataloader.data)
                     mIoU_list.append(mIoU)
                     
                     idx_max = mIoU_list.index(max(mIoU_list))
