@@ -2,6 +2,7 @@ import os
 import random
 import numpy as np
 import torch
+import torchvision
 
 from torchvision.transforms import functional as F
 from torch.utils.data import Dataset, DataLoader, dataloader
@@ -130,6 +131,14 @@ class DataLoadPreprocess(Dataset):
             gt_copy[gt == key] = value
         gt = Image.fromarray(gt_copy.astype(np.uint8))
         
+        if self.mode == 'eval':
+            image = np.array(image, dtype=np.float32) / 255.0
+            gt = np.array(gt, dtype=np.float32)
+            
+            sample = {'image': image, 'gt': gt}
+            sample = self.transform(sample)
+            return data_name, sample
+        
         rescaled_image, rescaled_gt = self.resize_random_crop(image, gt, self.args.input_height, self.args.input_width)
 
         rescaled_image = np.array(rescaled_image, dtype=np.float32) / 255.0
@@ -139,33 +148,25 @@ class DataLoadPreprocess(Dataset):
         sample = {'image': image, 'gt': gt}
         sample = self.transform(sample)
         
-        if self.mode == 'eval':
-            return data_name, sample
         
         return sample
             
-        # elif self.mode == 'val':
-        #     image = np.array(image, dtype=np.float32) / 255.0
-        #     gt = np.array(gt, dtype=np.float32)
-            
-        #     sample = {'image': image, 'gt': gt}
-        #     sample = self.transform(sample)
-        #     return sample
-        
-    # def rotate_image(self, img, angle, flag=Image.BILINEAR):
-    #     result = img.rotate(angle, resample=flag)
-
-    #     return result
-
     def resize_random_crop(self, image, gt, height, width):
         scaling = random.uniform(0.5, 2.0)
         scale_w, scale_h = [int(i*scaling) for i in image.size]
+        
         resized_image = image.resize((scale_w, scale_h), Image.CUBIC)
         resized_gt = gt.resize((scale_w, scale_h), Image.NEAREST)
         
-        i, j, h, w = transforms.RandomCrop.get_params(resized_image, output_size=(height, width))
-        crop_image = F.crop(resized_image, i, j, h, w)
-        crop_gt = F.crop(resized_gt, i, j, h, w)
+        x1 = random.randint(0, scale_w - width)
+        y1 = random.randint(0, scale_h - height)
+        
+        crop_image = resized_image.crop((x1, y1, x1 + width, y1 + height))
+        crop_gt = resized_gt.crop((x1, y1, x1 + width, y1 + height))
+        
+        # i, j, h, w = transforms.RandomCrop.get_params(resized_image, output_size=(height, width))
+        # crop_image = F.crop(resized_image, i, j, h, w)
+        # crop_gt = F.crop(resized_gt, i, j, h, w)
 
         return crop_image, crop_gt
     
@@ -185,13 +186,13 @@ class DataLoadPreprocess(Dataset):
 
     def augment_image(self, image):
         # gamma augmentation
-        # gamma  = random.uniform(0.5, 2.0)
-        # image_aug = image ** gamma
+        gamma  = random.uniform(0.9, 1.1)
+        image_aug = image ** gamma
         
         # brightness augmentation
-        brightness = random.uniform(-10, 10)
-        image_aug = image * brightness
-        
+        brightness = random.uniform(0.9, 1.1)
+        image_aug = image_aug * brightness
+
         # color augmentation
         # colors = np.random.uniform(0.9, 1.1, size=3)
         # white = np.ones((image.shape[0], image.shape[1]))

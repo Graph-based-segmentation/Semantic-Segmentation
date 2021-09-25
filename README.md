@@ -1,4 +1,4 @@
-# Multi-Scale Atrous Spatial Pyramid Pooling for Larger and Denser receptive field in Semantic Segmentation
+`# Multi-Scale Atrous Spatial Pyramid Pooling for Larger and Denser receptive field in Semantic Segmentation
 
 ## Introduction
 This code have simply upgraded code in the paper, "DenseASPP for Semantic Segmentation in Street Scenes". The paper don't have training code, only proposed model code so our team have implemented training code. But not simple training implementation code, our contribution is proposed. 
