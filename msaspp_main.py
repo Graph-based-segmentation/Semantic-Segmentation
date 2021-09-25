@@ -21,7 +21,7 @@ from tqdm import tqdm
 parser = argparse.ArgumentParser(description='Multi-scale ASPP training')
 
 parser.add_argument('--mode',                   type=str,   help='training and validation mode',    default='train')
-parser.add_argument('--model_name',             type=str,   help='model name to be trained',        default='denseaspp-v3')
+parser.add_argument('--model_name',             type=str,   help='model name to be trained',        default='denseaspp-v5.1')
 
 # Dataset
 parser.add_argument('--data_path',              type=str,   help='training data path',              default=os.getcwd())
@@ -64,10 +64,36 @@ def check_folder(path):
     if not os.path.exists(path):
         os.makedirs(path)
 
+def fast_hist(pred, gtruth, num_classes):
+    # mask indicates pixels we care about
+    mask = (gtruth >= 0) & (gtruth < num_classes)
+
+    # stretch ground truth labels by num_classes
+    #   class 0  -> 0
+    #   class 1  -> 19
+    #   class 18 -> 342
+    #
+    # TP at 0 + 0, 1 + 1, 2 + 2 ...
+    #
+    # TP exist where value == num_classes*class_id + class_id
+    # FP = row[class].sum() - TP
+    # FN = col[class].sum() - TP
+    hist = np.bincount(num_classes * gtruth[mask].astype(int) + pred[mask],
+                       minlength=num_classes ** 2)
+    hist = hist.reshape(num_classes, num_classes)
+    return hist
+
+def eval_metrics(hist):
+    acc = np.diag(hist).sum() / hist.sum()
+    acc_cls = np.diag(hist) / hist.sum(axis=1)
+    acc_cls = np.nanmean(acc_cls)
+    divisor = hist.sum(axis=1) + hist.sum(axis=0) - np.diag(hist)
+    iu = np.diag(hist) / divisor
+
+    return iu, acc, acc_cls
 
 def evaluate_model(val_dataloader, model, criterion):
-    eval_miou_sum = 0
-    # sum_iou_class = 0
+    iou_acc = 0
     eval_loss_sum = 0
     for sampled_eval in tqdm(val_dataloader.data):
         with torch.no_grad():
@@ -76,32 +102,25 @@ def evaluate_model(val_dataloader, model, criterion):
             
             eval_output = model(eval_image)
             model.eval()
+            
             eval_loss = criterion(eval_output, eval_gt)
-            
-            eval_output = F.softmax(eval_output, dim=1)
-            eval_output = torch.argmax(eval_output, dim=1)
-            eval_output = eval_output.contiguous().view(-1)
-            eval_gt = eval_gt.contiguous().view(-1)
-            
-            iou_per_class = []
-            for num_class in range(len(val_dataloader.class_names)):
-                true_class = (eval_output == num_class)
-                true_label = (eval_gt == num_class)
-                if true_label.long().sum().item() == 0:
-                    iou_per_class.append(np.nan)
-                else:
-                    intersect = torch.logical_and(true_class, true_label).sum().float().item()
-                    union = torch.logical_or(true_class, true_label).sum().float().item()
-                    
-                    iou = (intersect + 1e-10) / (union + 1e-10)
-                    iou_per_class.append(iou)
-            
-            eval_miou_sum += np.nanmean(iou_per_class)
-            # sum_iou_class += sum(iou_per_class)
             eval_loss_sum += eval_loss
             
-    return eval_loss_sum, eval_miou_sum
+        eval_output = F.softmax(eval_output, dim=1)
+        eval_output = torch.argmax(eval_output, dim=1)
+        
+        eval_output = eval_output.detach().cpu().numpy()
+        eval_gt = eval_gt.detach().cpu().numpy()
+        
+        _iou_acc = fast_hist(eval_output.flatten(), eval_gt.flatten(), 19)
+        iou_acc += _iou_acc
+        
+    mean_eval_loss = eval_loss_sum/len(val_dataloader.data)
+    iu, acc, acc_cls = eval_metrics(iou_acc)
+    mean_iu = np.nanmean(iu)
     
+    return mean_iu, acc, acc_cls, mean_eval_loss
+            
 def main():
     model_filename = args.model_name + '.py'
     command = 'mkdir ' + os.path.join(args.log_directory, args.model_name)
@@ -250,8 +269,7 @@ def main_worker(ngpus_per_node, args):
                 duration = 0
                 time_sofar = (time.time() - start_time) / 3600
                 training_time_left = (num_total_steps / global_step - 1.0) * time_sofar
-                # if not args.multiprocessing_distributed or (args.multiprocessing_distributed and args.rank % ngpus_per_node == 0):
-                    # print("{}".format(args.model_name))
+
                 print_string = 'GPU: {} | examples/s: {:4.2f} | Average train loss: {:.5f} | time elapsed: {:.2f}h | time left: {:.2f}h'
                 print(print_string.format(args.gpu, examples_per_sec, sum(train_loss_list)/len(train_loss_list), time_sofar, training_time_left))
                 
@@ -275,15 +293,13 @@ def main_worker(ngpus_per_node, args):
                 
             if global_step and global_step % args.save_freq == 0 and not model_just_loaded:
                 if not args.multiprocessing_distributed or (args.multiprocessing_distributed and args.rank % ngpus_per_node == 0):
-                    eval_loss_sum, eval_miou_sum = evaluate_model(val_dataloader, model, criterion)
-                    # eval_loss_sum, sum_iou_class = evaluate_model(val_dataloader, model, criterion)
-                    mIoU = eval_miou_sum / len(val_dataloader.data)
-                    mIoU_list.append(mIoU)
+                    mean_iu, acc, acc_cls, mean_eval_loss = evaluate_model(val_dataloader, model, criterion)
+                    mIoU_list.append(mean_iu)
                     
                     idx_max = mIoU_list.index(max(mIoU_list))
                     if idx_max == 0 and idx_max == (global_step // args.save_freq - 1):
-                        print_string = 'GPU: {} | Epoch: {}/{} | Average train loss: {:.5f} | Average validation loss: {:.5f} | evaluation mIoU: {:.5f}'
-                        print(print_string.format(args.gpu, epoch, args.num_epochs, sum(train_loss_list)/len(train_loss_list), eval_loss_sum/len(val_dataloader.data), mIoU_list[idx_max]))
+                        print_string = 'GPU: {} | Epoch: {}/{} | Average train loss: {:.5f} | Average validation loss: {:.5f} | evaluation mIoU: {:.5f} | evaluation acc: {:.5f} | evaluation acc cls: {:.5f}'
+                        print(print_string.format(args.gpu, epoch, args.num_epochs, sum(train_loss_list)/len(train_loss_list), mean_eval_loss, mIoU_list[idx_max], acc, acc_cls))
                         checkpoint = {'global_step': global_step,
                                       'model': model.state_dict(),
                                       'optimizer': optimizer.state_dict(),
@@ -295,8 +311,8 @@ def main_worker(ngpus_per_node, args):
                         pass
                     
                     elif idx_max !=0 and idx_max == (global_step // args.save_freq - 1):
-                        print_string = 'GPU: {} | Epoch: {}/{} | Average train loss: {:.5f} | Average validation loss: {:.5f} | evaluation mIoU: {:.5f}'
-                        print(print_string.format(args.gpu, epoch, args.num_epochs, sum(train_loss_list)/len(train_loss_list), eval_loss_sum/len(val_dataloader.data), max(mIoU_list)))
+                        print_string = 'GPU: {} | Epoch: {}/{} | Average train loss: {:.5f} | Average validation loss: {:.5f} | evaluation mIoU: {:.5f} | evaluation acc: {:.5f} | evaluation acc cls: {:.5f}'
+                        print(print_string.format(args.gpu, epoch, args.num_epochs, sum(train_loss_list)/len(train_loss_list), mean_eval_loss, max(mIoU_list), acc, acc_cls))
                         checkpoint = {'global_step': global_step,
                                       'model': model.state_dict(),
                                       'optimizer': optimizer.state_dict(),

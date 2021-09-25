@@ -10,7 +10,6 @@ class DenseASPP(nn.Module):
     * output_scale can only set as 8 or 16
     """
     def __init__(self, args, model_cfg, n_class=19, output_stride=8):
-    # def __init__(self, model_cfg, n_class=19, output_stride=8):
         super(DenseASPP, self).__init__()
         # bn_size = model_cfg['bn_size']
         bn_size = args.batch_size

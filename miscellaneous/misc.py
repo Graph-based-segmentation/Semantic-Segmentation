@@ -1,14 +1,14 @@
-import os
-from math import ceil
-
+import torch.nn.functional as F
 import numpy as np
 import torch
-import torch.nn.functional as F
-from torch import nn
-from torch.autograd import Variable
+import math
+import os
 
 from sklearn.metrics import confusion_matrix
-import math
+from torch.autograd import Variable
+from tqdm import tqdm
+from math import ceil
+from torch import nn
 
 def check_mkdir(dir_name):
     if not os.path.exists(dir_name):
@@ -405,3 +405,40 @@ def sliced_forward(single_forward):
             return outputs_all_scales
 
     return wrapper
+
+def evaluate_model(args, val_dataloader, model, criterion):
+    eval_miou_sum = 0
+    # sum_iou_class = 0
+    eval_loss_sum = 0
+    for sampled_eval in tqdm(val_dataloader.data):
+        with torch.no_grad():
+            eval_image = sampled_eval['image'].cuda(args.gpu, non_blocking=True)
+            eval_gt = sampled_eval['gt'].cuda(args.gpu, non_blocking=True)
+            
+            eval_output = model(eval_image)
+            model.eval()
+            eval_loss = criterion(eval_output, eval_gt)
+            
+            eval_output = F.softmax(eval_output, dim=1)
+            eval_output = torch.argmax(eval_output, dim=1)
+            eval_output = eval_output.contiguous().view(-1)
+            eval_gt = eval_gt.contiguous().view(-1)
+            
+            iou_per_class = []
+            for num_class in range(len(val_dataloader.class_names)):
+                true_class = (eval_output == num_class)
+                true_label = (eval_gt == num_class)
+                if true_label.long().sum().item() == 0:
+                    iou_per_class.append(np.nan)
+                else:
+                    intersect = torch.logical_and(true_class, true_label).sum().float().item()
+                    union = torch.logical_or(true_class, true_label).sum().float().item()
+                    
+                    iou = (intersect + 1e-10) / (union + 1e-10)
+                    iou_per_class.append(iou)
+            
+            eval_miou_sum += np.nanmean(iou_per_class)
+            # sum_iou_class += sum(iou_per_class)
+            eval_loss_sum += eval_loss
+            
+    return eval_loss_sum, eval_miou_sum
