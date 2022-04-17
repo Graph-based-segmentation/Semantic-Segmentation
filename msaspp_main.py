@@ -6,7 +6,9 @@ import numpy as np
 import torch.multiprocessing as mp
 import torch.nn.functional as F
 import torch
+import torch.nn as nn
 
+# from torch_encoding.encoding.nn import BatchNorm2d
 # from networks.resnet50_3d_gcn_x5 import RESNET50_3D_GCN_X5
 # from torchvision.models.resnet import resnet50
 from msaspp_dataloader import msasppDataLoader, colorize_mask
@@ -14,17 +16,20 @@ from torch.utils.tensorboard import SummaryWriter
 from sklearn.metrics import confusion_matrix
 from torchvision import transforms
 from torch.backends import cudnn
-from denseASPP import DenseASPP
-from cfgs import DenseASPP121
+# from denseASPP import DenseASPP
+# from models.pspnet import SegmentationModule
+# from models.pspnet import PSPNet
+# from cfgs import DenseASPP121
+from models.bfp import get_bfp
 from tqdm import tqdm
 
 parser = argparse.ArgumentParser(description='Multi-scale ASPP training')
 
 parser.add_argument('--mode',                   type=str,   help='training and validation mode',    default='train')
-parser.add_argument('--model_name',             type=str,   help='model name to be trained',        default='denseaspp-v3')
+parser.add_argument('--model_name',             type=str,   help='model name to be trained',        default='psp-v1')
 
 # Dataset
-parser.add_argument('--data_path',              type=str,   help='training data path',              default=os.getcwd())
+parser.add_argument('--data_path',              type=str,   help='training data path',              default=os.path.dirname(os.getcwd()))
 parser.add_argument('--input_height',           type=int,   help='input height',                    default=512)
 parser.add_argument('--input_width',            type=int,   help='input width',                     default=512)
 
@@ -32,14 +37,14 @@ parser.add_argument('--input_width',            type=int,   help='input width', 
 parser.add_argument('--num_seed',               type=int,   help='random seed number',              default=1)
 parser.add_argument('--batch_size',             type=int,   help='train batch size',                default=8)
 parser.add_argument('--num_epochs',             type=int,   help='number of epochs',                default=80)
-parser.add_argument('--learning_rate',          type=float, help='initial learning rate',           default=3e-4)
-parser.add_argument('--weight_decay',           type=float, help='weight decay factor for optimization',                                default=1e-5)
+parser.add_argument('--learning_rate',          type=float, help='initial learning rate',           default=1e-2)
+parser.add_argument('--weight_decay',           type=float, help='weight decay factor for optimization',                                default=1e-4)
 parser.add_argument('--retrain',                type=bool,  help='If used with checkpoint_path, will restart training from step zero',  default=False)
 parser.add_argument('--do_eval',                type=bool,  help='Mod to evaluating the training model',                                default=False)
 
 # Preprocessing
 parser.add_argument('--random_rotate',          type=bool,  help='if set, will perform random rotation for augmentation',   default=False)
-parser.add_argument('--degree',                 type=float, help='random rotation maximum degree',                          default=2.5)
+parser.add_argument('--degree',                 type=float, help='random rotation maximum degree',                          default=[-10, 10])
 
 # Log and save
 parser.add_argument('--checkpoint_path',        type=str,   help='path to a specific checkpoint to load',               default='')
@@ -65,17 +70,19 @@ def check_folder(path):
         os.makedirs(path)
 
 
-def evaluate_model(val_dataloader, model, criterion):
+def evaluate_model(val_dataloader, model):
     eval_iou_sum_score = 0
     eval_loss_sum = 0
+    # criterion = model.crit
     for sampled_eval in tqdm(val_dataloader.data):
         with torch.no_grad():
-            eval_image = sampled_eval['image'].cuda(args.gpu, non_blocking=True)
-            eval_gt = sampled_eval['gt'].cuda(args.gpu, non_blocking=True)
+            # eval_image = sampled_eval['image'].cuda(args.gpu, non_blocking=True)
+            eval_gt = sampled_eval['seg_label'].cuda(args.gpu, non_blocking=True)
             
-            eval_output = model(eval_image)
+            # eval_output = model(sampled_eval)
+            eval_loss, _, eval_output = model(sampled_eval)
             model.eval()
-            eval_loss = criterion(eval_output, eval_gt)
+            # eval_loss = criterion(eval_output, eval_gt)
             
             eval_output = F.softmax(eval_output, dim=1)
             eval_output = torch.argmax(eval_output, dim=1)
@@ -96,10 +103,12 @@ def evaluate_model(val_dataloader, model, criterion):
                     iou_per_class.append(iou)
                     
             eval_iou_sum_score += np.nanmean(iou_per_class)
-            eval_loss_sum += eval_loss
+            # eval_loss_sum += eval_loss
+            eval_loss_sum += sum(eval_loss)
             
     return eval_loss_sum, eval_iou_sum_score
-    
+
+
 def main():
     model_filename = args.model_name + '.py'
     command = 'mkdir ' + os.path.join(args.log_directory, args.model_name)
@@ -114,13 +123,15 @@ def main():
     if args.checkpoint_path == '':
         aux_out_path = os.path.join(args.log_directory, args.model_name)
         
-        command = 'cp denseASPP.py ' + aux_out_path
+        command = 'copy pspnet.py ' + aux_out_path
+        os.system(command)
+        command = 'copy ResnetBasedModel.py ' + aux_out_path
         os.system(command)
         
-        command = 'cp msaspp_main.py ' + aux_out_path
+        command = 'copy msaspp_main.py ' + aux_out_path
         os.system(command)
         
-        command = 'cp msaspp_dataloader.py ' + aux_out_path
+        command = 'copy msaspp_dataloader.py ' + aux_out_path
         os.system(command)
     else:
         loaded_model_dir = os.path.dirname(args.checkpoint_path)
@@ -140,12 +151,24 @@ def main():
     else:
         main_worker(ngpus_per_node, args)
     
-        
+
 def main_worker(ngpus_per_node, args):
     if args.gpu is not None:
         print("Use GPU: {} for training".format(args.gpu))
         
-    model = DenseASPP(args, model_cfg=DenseASPP121.Model_CFG)
+    # Model Load
+    # model = DenseASPP(args, model_cfg=DenseASPP121.Model_CFG)
+    # net_enc = PSPNet.build_encoder(arch='resnet50dilated', fc_dim=2048, weights='')
+    # net_dec = PSPNet.build_decoder(arch='ppm_deepsup', 
+    #                                 fc_dim=2048, num_class=19, 
+    #                                 weights='', use_softmax=False)
+    
+    # criterion = nn.NLLLoss(ignore_index=255).cuda()
+    # model = SegmentationModule(net_enc, net_dec, criterion, deep_sup_scale=0.4)
+    kwargs = {'aux': False, 'se_loss': False, 'norm_layer': nn.BatchNorm2d,
+              'base_size': 608, 'crop_size': 576, 'multi_grid': True, 
+              'multi_dilation': [4, 8, 16]}
+    model = get_bfp(backbone="resnet50", root="./pretrain_models", **kwargs)
     model.train()
     
     num_params = sum([np.prod(p.size()) for p in model.parameters()])
@@ -164,8 +187,12 @@ def main_worker(ngpus_per_node, args):
         print("Model Initialized on GPU: {}".format(args.gpu))
     else:
         print("Model Initialized")
-        
+    
+
     global_step = 0
+    # optimizer = torch.optim.SGD([{'params': model.module.encoder.parameters(), 'weight_decay': args.weight_decay},
+    #                             {'params': model.module.decoder.parameters(), 'weight_decay': args.weight_decay}],
+    #                             lr=args.learning_rate, momentum=0.9)
     optimizer = torch.optim.Adam(model.parameters(), weight_decay=args.weight_decay, lr=args.learning_rate)
     
     if args.checkpoint_path != '':
@@ -214,11 +241,10 @@ def main_worker(ngpus_per_node, args):
             optimizer.zero_grad()
             befor_op_time = time.time()
             
-            sample_image = sample_batched['image'].cuda(args.gpu, non_blocking=True)
-            sample_gt = sample_batched['gt'].cuda(args.gpu, non_blocking=True)
+            sample_image = sample_batched['img_data'].cuda(args.gpu, non_blocking=True)
+            sample_gt = sample_batched['seg_label'].cuda(args.gpu, non_blocking=True)
             
             output = model(sample_image)
-            
             loss = criterion(output, sample_gt)
             loss.backward()
             
@@ -266,7 +292,7 @@ def main_worker(ngpus_per_node, args):
                 
             if global_step and global_step % args.save_freq == 0:
                 if not args.multiprocessing_distributed or (args.multiprocessing_distributed and args.rank % ngpus_per_node == 0):
-                    eval_loss_sum, eval_iou_sum_score = evaluate_model(val_dataloader, model, criterion)
+                    eval_loss_sum, eval_iou_sum_score = evaluate_model(val_dataloader, model)
                     mIoU = eval_iou_sum_score / len(val_dataloader.data)
                     mIoU_list.append(mIoU)
                     

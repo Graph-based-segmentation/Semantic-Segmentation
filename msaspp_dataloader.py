@@ -39,7 +39,7 @@ def make_dataset(quality, args, mode):
 
     if quality == 'coarse':
         img_dir_name = 'leftImg8bit_trainextra' if args.mode == 'train_extra' else 'leftImg8bit_trainvaltest'
-        mask_path = os.path.join(args.data_path, 'gtCoarse', 'gtCoarse', args.mode)
+        mask_path = os.path.join(args.data_path, "datasets", 'gtCoarse', 'gtCoarse', args.mode)
         mask_postfix = '_gtCoarse_labelIds.png'
         
     else:
@@ -47,12 +47,12 @@ def make_dataset(quality, args, mode):
         mask_postfix = '_gtFine_labelIds.png'
         
         if mode == 'train':
-            mask_path = os.path.join(args.data_path, 'gtFine_trainvaltest', 'gtFine', mode)
-            img_path = os.path.join(args.data_path, img_dir_name, 'leftImg8bit', mode)
+            mask_path = os.path.join(args.data_path, "datasets", "cityscapes", 'gtFine_trainvaltest', 'gtFine', mode)
+            img_path = os.path.join(args.data_path, "datasets", "cityscapes",img_dir_name, 'leftImg8bit', mode)
         
         elif mode == 'val' or mode == 'eval':
-            mask_path = os.path.join(args.data_path, 'gtFine_trainvaltest', 'gtFine', 'val')
-            img_path = os.path.join(args.data_path, img_dir_name, 'leftImg8bit', 'val')
+            mask_path = os.path.join(args.data_path, "datasets", "cityscapes",'gtFine_trainvaltest', 'gtFine', 'val')
+            img_path = os.path.join(args.data_path, "datasets", "cityscapes", img_dir_name, 'leftImg8bit', 'val')
         
         assert os.listdir(img_path) == os.listdir(mask_path)
         
@@ -131,12 +131,14 @@ class DataLoadPreprocess(Dataset):
         gt = Image.fromarray(gt_copy.astype(np.uint8))
         
         rescaled_image, rescaled_gt = self.resize_random_crop(image, gt, self.args.input_height, self.args.input_width)
-
+        rescaled_image = self.rotate_image(rescaled_image, angle=self.args.degree)
+        
         rescaled_image = np.array(rescaled_image, dtype=np.float32) / 255.0
         rescaled_gt = np.array(rescaled_gt, dtype=np.float32)
         image, gt = self.train_preprocess(rescaled_image, rescaled_gt)
         
-        sample = {'image': image, 'gt': gt}
+        # sample = {'image': image, 'gt': gt}
+        sample = {'img_data': image, 'seg_label': gt}
         sample = self.transform(sample)
         
         if self.mode == 'eval':
@@ -152,10 +154,11 @@ class DataLoadPreprocess(Dataset):
         #     sample = self.transform(sample)
         #     return sample
         
-    # def rotate_image(self, img, angle, flag=Image.BILINEAR):
-    #     result = img.rotate(angle, resample=flag)
+    def rotate_image(self, img, angle, flag=Image.BILINEAR):
+        result = transforms.RandomRotation(angle, resample=flag)(img)
+        # result = img.rotate(angle, resample=flag)
 
-    #     return result
+        return result
 
     def resize_random_crop(self, image, gt, height, width):
         scaling = random.uniform(0.5, 2.0)
@@ -165,7 +168,7 @@ class DataLoadPreprocess(Dataset):
         
         i, j, h, w = transforms.RandomCrop.get_params(resized_image, output_size=(height, width))
         crop_image = F.crop(resized_image, i, j, h, w)
-        crop_gt = F.crop(resized_gt, i, j, h, w)
+        crop_gt = F.crop(resized_gt, i, j, h//8, w//8)
 
         return crop_image, crop_gt
     
@@ -214,10 +217,10 @@ class ToTensor(object):
         image, gt = self.to_tensor(sample)
         image = self.normalize(image)
         
-        return {'image': image, 'gt': gt}
+        return {'img_data': image, 'seg_label': gt}
     
     def to_tensor(self, pic):
-        image, gt = pic['image'], pic['gt']
+        image, gt = pic['img_data'], pic['seg_label']
         
         if isinstance(image, np.ndarray) and isinstance(gt, np.ndarray):
             image = torch.from_numpy(image.transpose(2, 0, 1))
