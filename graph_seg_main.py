@@ -8,7 +8,7 @@ import torch.nn.functional as F
 import torch
 import torch.nn as nn
 
-from msaspp_dataloader import msasppDataLoader, colorize_mask
+from graph_seg_dataloader import msasppDataLoader, colorize_mask
 from torch.utils.tensorboard import SummaryWriter
 from sklearn.metrics import confusion_matrix
 from torchvision import transforms
@@ -153,18 +153,10 @@ def main_worker(ngpus_per_node, args):
     if args.gpu is not None:
         print("Use GPU: {} for training".format(args.gpu))
         
-    # Model Load
-    # model = DenseASPP(args, model_cfg=DenseASPP121.Model_CFG)
-    # net_enc = PSPNet.build_encoder(arch='resnet50dilated', fc_dim=2048, weights='')
-    # net_dec = PSPNet.build_decoder(arch='ppm_deepsup', 
-    #                                 fc_dim=2048, num_class=19, 
-    #                                 weights='', use_softmax=False)
-    
-    # criterion = nn.NLLLoss(ignore_index=255).cuda()
-    # model = SegmentationModule(net_enc, net_dec, criterion, deep_sup_scale=0.4)
     kwargs = {'aux': False, 'se_loss': False, 'norm_layer': nn.BatchNorm2d,
               'base_size': 608, 'crop_size': 576, 'multi_grid': True, 
               'multi_dilation': [4, 8, 16]}
+    
     model = get_bfp(backbone="resnet50", root="./pretrain_models", **kwargs)
     model.train()
     
