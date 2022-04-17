@@ -23,6 +23,7 @@ from tqdm import tqdm
 parser = argparse.ArgumentParser(description='Multi-scale ASPP training')
 
 parser.add_argument('--mode',                   type=str,   help='training and validation mode',    default='train')
+parser.add_argument('--backbone',               type=str,   help='being used backbone model',       default='resnet50')
 parser.add_argument('--model_name',             type=str,   help='model name to be trained',        default='psp-v1')
 
 # Dataset
@@ -157,7 +158,7 @@ def main_worker(ngpus_per_node, args):
               'base_size': 608, 'crop_size': 576, 'multi_grid': True, 
               'multi_dilation': [4, 8, 16]}
     
-    model = get_bfp(backbone="resnet50", root="./pretrain_models", **kwargs)
+    model = get_bfp(backbone=args.backbone, root="./pretrain_models", **kwargs)
     model.train()
     
     num_params = sum([np.prod(p.size()) for p in model.parameters()])
