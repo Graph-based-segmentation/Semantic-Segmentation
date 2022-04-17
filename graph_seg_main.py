@@ -17,7 +17,7 @@ from torch.backends import cudnn
 # from models.pspnet import SegmentationModule
 # from models.pspnet import PSPNet
 # from cfgs import DenseASPP121
-from models.bfp import get_bfp
+from models.bfp_net import get_bfp
 from tqdm import tqdm
 
 parser = argparse.ArgumentParser(description='Multi-scale ASPP training')
