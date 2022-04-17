@@ -7,8 +7,7 @@ import torch
 import cv2
 import os
 
-import addToConfusionMatrix
-from msaspp_dataloader import msasppDataLoader
+from graph_seg_dataloader import msasppDataLoader
 from cityscapesLabels import labels, id2label
 from denseASPP import DenseASPP
 from cfgs import DenseASPP121
