@@ -4,6 +4,12 @@ from torch.nn.functional import upsample,normalize
 from torch.nn import Module, Conv1d, ReLU, Parameter
 from models.backbone import BaseNet
 
+def get_bfp(backbone='resnet50',
+            root='./pretrain_models', **kwargs):
+
+    model = BFP(19, backbone=backbone, root=root, **kwargs)
+    return model
+
 class BFP(BaseNet):
     r"""Fully Convolutional Networks for Semantic Segmentation
 
@@ -28,14 +34,14 @@ class BFP(BaseNet):
         self.head = BFPHead(2048, nclass, norm_layer)
 
     def forward(self, x):
-        imsize = x.size()[2:]
+        img_size = x.size()[2:]
         _, _, c3, c4 = self.base_forward(x)
 
         x = self.head(c4)
         x = list(x)
 
-        x[0] = upsample(x[0], imsize, **self._up_kwargs)
-        x[1] = upsample(x[1], imsize, **self._up_kwargs)
+        x[0] = upsample(x[0], img_size, **self._up_kwargs)
+        x[1] = upsample(x[1], img_size, **self._up_kwargs)
 
         outputs = [x[0]]
         outputs.append(x[1])
@@ -54,28 +60,36 @@ class BFPHead(nn.Module):
         self.adapt2 = nn.Sequential(nn.Conv2d(inter_channels, inter_channels, 3, dilation=12 , padding=12, bias=False),
                                    norm_layer(inter_channels),
                                    nn.ReLU())
+        
         self.adapt3 = nn.Sequential(nn.Conv2d(inter_channels, inter_channels, 3, dilation=12 , padding=12, bias=False),
                                    norm_layer(inter_channels),
                                    nn.ReLU())
+        
         self.uag_rnn = UAG_RNN(inter_channels)
+        
         self.seg1 = nn.Sequential(nn.Conv2d(inter_channels, inter_channels, 3, padding=1, bias=False),
                                    norm_layer(inter_channels),
                                    nn.ReLU(),
                                    nn.Dropout2d(0.1, False),
                                    nn.Conv2d(512, out_channels+1, 1))
+        
         self.seg2 = nn.Sequential(nn.Conv2d(inter_channels, inter_channels, 3, padding=1, bias=False),
                                    norm_layer(inter_channels),
                                    nn.ReLU(),
                                    nn.Dropout2d(0.1, False),
                                    nn.Conv2d(512, out_channels, 1))
+        
         self.softmax = nn.Softmax(dim=1)
+        
         self.gamma = nn.Parameter(2*torch.ones(1))
+        
         self.bias = nn.Parameter(torch.ones(1)/out_channels)
 
     def forward(self, x):
         # adapt from CNN
         feat1 = self.adapt1(x)
         feat2 = self.adapt2(feat1)
+        
         # Boundary
         s1_output = self.seg1(feat2)
         s1_output_ = self.softmax(s1_output)
@@ -104,13 +118,7 @@ class BFPHead(nn.Module):
         # import pdb
         # pdb.set_trace()
         return tuple(output)
-
-def get_bfp(backbone='resnet50',
-            root='./pretrain_models', **kwargs):
-
-    model = BFP(19, backbone=backbone, root=root, **kwargs)
-    return model
-
+    
 class UAG_RNN(Module):
     """Unidirectional Acyclic Graphs (UCGs)"""
     def __init__(self, in_dim):

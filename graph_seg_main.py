@@ -8,9 +8,6 @@ import torch.nn.functional as F
 import torch
 import torch.nn as nn
 
-# from torch_encoding.encoding.nn import BatchNorm2d
-# from networks.resnet50_3d_gcn_x5 import RESNET50_3D_GCN_X5
-# from torchvision.models.resnet import resnet50
 from msaspp_dataloader import msasppDataLoader, colorize_mask
 from torch.utils.tensorboard import SummaryWriter
 from sklearn.metrics import confusion_matrix
