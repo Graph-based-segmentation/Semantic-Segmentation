@@ -1,0 +1,2 @@
+GloRe/dataset/Kinetics/raw/list_cvt/kinetics_train.txt filter=lfs diff=lfs merge=lfs -text
+GloRe/dataset/Kinetics/raw/list_cvt/kinetics_train_avi.txt filter=lfs diff=lfs merge=lfs -text
