@@ -1,0 +1,12 @@
+Traceback (most recent call last):
+  File "train_kinetics.py", line 17, in <module>
+    from train_model import train_model
+  File "/workspace/home/whyjs/semseg/GloRe/train_model.py", line 14, in <module>
+    from data import iterator_factory
+  File "/workspace/home/whyjs/semseg/GloRe/data/iterator_factory.py", line 12, in <module>
+    from . import video_transforms as transforms
+  File "/workspace/home/whyjs/semseg/GloRe/data/video_transforms.py", line 9, in <module>
+    from .image_transforms import *
+  File "/workspace/home/whyjs/semseg/GloRe/data/image_transforms.py", line 6, in <module>
+    import cv2
+ModuleNotFoundError: No module named 'cv2'
