@@ -1,0 +1,10 @@
+Traceback (most recent call last):
+  File "train_kinetics.py", line 17, in <module>
+    from train_model import train_model
+  File "/workspace/home/whyjs/semseg/GloRe/train_model.py", line 17, in <module>
+    from train.model import model
+  File "/workspace/home/whyjs/semseg/GloRe/train/model.py", line 135, in <module>
+    class model(static_model):
+  File "/workspace/home/whyjs/semseg/GloRe/train/model.py", line 222, in model
+    epoch_div_factor=(torch.distributed.get_world_size() if torch.distributed._initialized else 1),
+AttributeError: module 'torch.distributed' has no attribute '_initialized'

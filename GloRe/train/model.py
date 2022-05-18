@@ -219,7 +219,7 @@ class model(static_model):
             epoch_end=10000,
             precise_bn=False,
             precise_bn_steps=500,
-            epoch_div_factor=(torch.distributed.get_world_size() if torch.distributed._initialized else 1),
+            epoch_div_factor=(torch.distributed.get_world_size() if torch.distributed.is_initialized() else 1),
             **kwargs):
 
         """
