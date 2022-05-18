@@ -172,6 +172,7 @@ class RESNET50_3D_GCN_X5(nn.Module):
             import torch
             load_method='inflation' # 'random', 'inflation'
             pretrained_model=os.path.join(os.path.dirname(os.path.realpath(__file__)), 'pretrained/resnet50-lite.pth')
+            print(pretrained_model)
             logging.info("Network:: symbol initialized, use pretrained model: `{}'".format(pretrained_model))
             assert os.path.exists(pretrained_model), "cannot locate: `{}'".format(pretrained_model)
             state_dict_2d = torch.load(pretrained_model)
