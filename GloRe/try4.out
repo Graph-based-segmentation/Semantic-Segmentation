@@ -1,0 +1,8 @@
+Traceback (most recent call last):
+  File "train_kinetics.py", line 17, in <module>
+    from train_model import train_model
+  File "/workspace/home/whyjs/semseg/GloRe/train_model.py", line 14, in <module>
+    from data import iterator_factory
+  File "/workspace/home/whyjs/semseg/GloRe/data/iterator_factory.py", line 21, in <module>
+    seed=torch.distributed.get_rank() if torch.distributed._initialized else 0,
+AttributeError: module 'torch.distributed' has no attribute '_initialized'
