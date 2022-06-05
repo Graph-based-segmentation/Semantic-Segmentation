@@ -73,6 +73,9 @@ parser.add_argument('--world-size', default=1, type=int,
                     help='number of distributed processes')
 parser.add_argument('--dist-url', default='tcp://HOSTNAME:23455', type=str,
                     help='url used to set up distributed training')
+parser.add_argument('--pretrained_name', default='resnet50-lite_3d_8x8_w-glore_2-3_ep-0000.pth', type=str, 
+                    help='pretrained resnet model file name')
+
 
 def autofill(args):
     # customized
@@ -150,6 +153,7 @@ if __name__ == "__main__":
             "args: `resume_epoch' must be defined for fine tuning"
     net, input_conf = get_symbol(name=args.network,
                      pretrained=args.pretrained if args.resume_epoch < 0 else None,
+                     pretrained_name = args.pretrained_name if args.pretrained else None,
                      print_net=False, # True if args.distributed else False,
                      **dataset_cfg)
 
