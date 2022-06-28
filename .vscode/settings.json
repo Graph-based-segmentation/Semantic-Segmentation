@@ -2,6 +2,20 @@
     "editor.semanticHighlighting.enabled": false,
     "editor.tokenColorCustomizations": {
         "textMateRules": [
+            {
+                "scope": ["string.quoted.docstring.multi.python"],
+                "settings": {
+                    "foreground": "#007500",
+                    "fontStyle": "italic"
+                }
+            },
+            {
+                "scope": ["support.type.python"],
+                "settings": {
+                    "foreground": "#3bff9d",
+                    "fontStyle": "bold"
+                }
+            },
              {
                 "scope":["variable.parameter.function.language.python"],
                 "settings": {
