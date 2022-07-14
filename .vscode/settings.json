@@ -3,6 +3,12 @@
     "editor.tokenColorCustomizations": {
         "textMateRules": [
             {
+                "scope": ["constant.other.caps.python"],
+                "settings": {
+                    "foreground": "#ff953e",
+                }
+            },
+            {
                 "scope": ["string.quoted.docstring.multi.python"],
                 "settings": {
                     "foreground": "#007500",
